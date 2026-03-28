@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comparateur Immobilier - Leboncoin vs DVF</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="search-bar">
+      <input type="text" id="search-input" placeholder="Rechercher une commune..." autocomplete="off" />
+      <ul id="search-results"></ul>
+      <button id="see-all-btn" onclick="showAllCached()">Voir tout</button>
+      <button id="fav-btn-header" onclick="showFavorites()">★ Favoris (<span id="fav-count">0</span>)</button>
+      <button id="toggle-map-btn" onclick="toggleMap()">Masquer la carte</button>
+    </div>
+
+    <div id="main-content">
+      <div id="map-container">
+        <div id="map"></div>
+      </div>
+      <div id="panel">
+        <div id="panel-placeholder">
+          <p>Cliquez sur la carte ou recherchez une commune pour commencer l'analyse.</p>
+        </div>
+        <div id="panel-loading" class="hidden">
+          <div class="spinner"></div>
+          <p>Chargement des données...</p>
+        </div>
+        <div id="panel-results" class="hidden">
+          <h2 id="commune-name"></h2>
+          <p id="commune-info" class="text-muted"></p>
+
+          <div id="comparison-cards">
+            <div class="card card-leboncoin">
+              <h3>Annonces</h3>
+              <p class="card-label">Sans travaux</p>
+              <p class="card-value" id="lbc-price">--</p>
+              <p class="card-detail" id="lbc-count"></p>
+            </div>
+            <div class="card card-renov">
+              <h3>Avec travaux</h3>
+              <p class="card-label">Annonces à rénover</p>
+              <p class="card-value" id="renov-price">--</p>
+              <p class="card-detail" id="renov-count"></p>
+            </div>
+            <div class="card card-dvf">
+              <h3>DVF (Gouv.)</h3>
+              <p class="card-label">Transactions 3 ans</p>
+              <p class="card-value" id="dvf-price">--</p>
+              <p class="card-detail" id="dvf-count"></p>
+            </div>
+          </div>
+
+          <div id="details-section">
+            <div id="all-listings"></div>
+          </div>
+        </div>
+
+        <div id="panel-error" class="hidden">
+          <p id="error-message"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+node_modules/
+.env
+.DS_Store
+.chrome-data/
+.lbc-cache.json
+.lbc-ad-cache.json
+.bienici-cache.json
+.pap-cache.json
+.seloger-cache.json
+.tram-cache.json
+.favorites.json
