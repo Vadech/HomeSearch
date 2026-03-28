@@ -3,14 +3,25 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
-const puppeteer = require('puppeteer');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- Client HTTP pour Leboncoin (got-scraping pour le fingerprint TLS Chrome) ---
+let gotScraping;
+const gotReady = import('got-scraping').then(m => { gotScraping = m.gotScraping; });
+
+const LBC_HEADERS = {
+  'Accept': 'application/json',
+  'Accept-Language': 'fr-FR,fr;q=0.9',
+  'Origin': 'https://www.leboncoin.fr',
+  'Referer': 'https://www.leboncoin.fr/',
+  'api_key': 'ba0c2dad52b3ec',
+  'Content-Type': 'application/json',
+};
 
 // --- Geo API: recherche de communes ---
 app.get('/api/communes', async (req, res) => {
@@ -137,99 +148,7 @@ app.get('/api/dvf', async (req, res) => {
   }
 });
 
-// --- Leboncoin: scraping via Puppeteer (mode visible + cookies persistants) ---
-let browser = null;
-const USER_DATA_DIR = path.join(__dirname, '.chrome-data');
-
-async function getBrowser() {
-  if (!browser || !browser.connected) {
-    browser = await puppeteer.launch({
-      headless: false,
-      userDataDir: USER_DATA_DIR,
-      args: [
-        '--no-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=800,600',
-        '--window-position=2000,2000',
-        '--no-focus-on-launch',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-      ],
-    });
-    // Minimiser la fenêtre du navigateur
-    const pages = await browser.pages();
-    for (const p of pages) {
-      const session = await p.createCDPSession();
-      await session.send('Browser.setWindowBounds', {
-        windowId: (await session.send('Browser.getWindowForTarget')).windowId,
-        bounds: { windowState: 'minimized' },
-      }).catch(() => {});
-    }
-  }
-  return browser;
-}
-
-// Résoudre le slider Datadome si présent
-async function solveDateDomeSlider(page) {
-  // Vérifier si on est sur une page de vérification Datadome
-  const isBlocked = await page.evaluate(() => {
-    const text = document.body?.innerText || '';
-    return text.includes('Faites glisser') || text.includes('Verifying') || text.includes('robot');
-  });
-
-  if (!isBlocked) return false;
-
-  console.log('[LBC] Détection captcha Datadome — tentative de résolution du slider...');
-
-  // Le slider peut être dans une iframe
-  let sliderFrame = page;
-  const frames = page.frames();
-  for (const frame of frames) {
-    const hasSlider = await frame.evaluate(() => {
-      return !!document.querySelector('.captcha-slider, #captcha-container, .slider-container, [class*="slider"], [class*="captcha"]');
-    }).catch(() => false);
-    if (hasSlider) { sliderFrame = frame; break; }
-  }
-
-  // Chercher l'élément slider à glisser
-  const slider = await sliderFrame.$('.captcha-slider .slider-handle, [class*="slider"] button, .captcha-container button, #captcha-container button, button[aria-label*="slide"], .geetest_slider_button, .slider-icon');
-
-  if (slider) {
-    const box = await slider.boundingBox();
-    if (box) {
-      // Glisser de gauche à droite avec un mouvement naturel
-      const startX = box.x + box.width / 2;
-      const startY = box.y + box.height / 2;
-      const endX = startX + 280;
-
-      await page.mouse.move(startX, startY);
-      await page.mouse.down();
-      // Mouvement progressif avec légère variation
-      for (let x = startX; x <= endX; x += 5 + Math.random() * 3) {
-        await page.mouse.move(x, startY + (Math.random() * 2 - 1));
-        await new Promise(r => setTimeout(r, 10 + Math.random() * 15));
-      }
-      await page.mouse.move(endX, startY);
-      await page.mouse.up();
-
-      console.log('[LBC] Slider glissé, attente de la redirection...');
-      await new Promise(r => setTimeout(r, 5000));
-      return true;
-    }
-  }
-
-  // Si pas de slider trouvé, attendre — l'utilisateur peut résoudre manuellement
-  console.log('[LBC] Slider non trouvé automatiquement. Attente de résolution manuelle (30s)...');
-  try {
-    await page.waitForSelector('#__NEXT_DATA__', { timeout: 30000 });
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-process.on('SIGINT', async () => { if (browser) await browser.close(); process.exit(); });
-process.on('SIGTERM', async () => { if (browser) await browser.close(); process.exit(); });
+// --- Leboncoin: appels API directs (sans Puppeteer) ---
 
 // Cache des annonces Leboncoin — persisté sur disque
 const CACHE_FILE = path.join(__dirname, '.lbc-cache.json');
@@ -254,114 +173,94 @@ const lbcCache = loadCache();
 app.get('/api/leboncoin', async (req, res) => {
   const { city, zipcode, department_id, lat, lng, refresh } = req.query;
 
-  // Clé de cache basée sur la ville (pas seulement le code postal)
   const cacheKey = city ? `${city}_${zipcode}` : (zipcode || department_id || 'all');
 
-  // Retourner le cache sauf si refresh explicite
   if (!refresh && lbcCache.has(cacheKey)) {
     const cached = lbcCache.get(cacheKey);
     return res.json({ ...cached, fromCache: true });
   }
 
-  // Format Leboncoin : Ville_CP__lat_lng_rayon_0
-  const params = new URLSearchParams({ category: '9', real_estate_type: '1,2', price: '500000-750000', sort: 'time', order: 'desc' });
-  if (city && zipcode && lat && lng) {
-    const cleanCity = city.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    params.set('locations', `${cleanCity}_${zipcode}__${lat}_${lng}_5000_0`);
-  } else if (department_id) {
-    params.set('locations', `d_${department_id}`);
-  }
-
-  const url = `https://www.leboncoin.fr/recherche?${params.toString()}`;
-  let page;
-
   try {
-    const b = await getBrowser();
-    page = await b.newPage();
-    // Minimiser l'onglet
-    try {
-      const session = await page.createCDPSession();
-      const { windowId } = await session.send('Browser.getWindowForTarget');
-      await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
-    } catch (_) {}
+    // Construire la requête pour l'API Leboncoin
+    const body = {
+      limit: 50,
+      limit_alu: 3,
+      filters: {
+        category: { id: '9' },  // Ventes immobilières
+        enums: {
+          real_estate_type: ['1', '2'],  // Maison, Appartement
+          ad_type: ['offer'],
+        },
+        ranges: {
+          price: { min: 500000, max: 750000 },
+          square: { min: 120 },
+        },
+        location: {},
+        keywords: {},
+      },
+      sort_by: 'time',
+      sort_order: 'desc',
+    };
 
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en'] });
-      window.chrome = { runtime: {} };
-    });
-
-    await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-    );
-    await page.setViewport({ width: 1366, height: 768 });
-
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-
-    // Vérifier si Datadome bloque et tenter de résoudre
-    const hasData = await page.$('#__NEXT_DATA__');
-    if (!hasData) {
-      await solveDateDomeSlider(page);
+    // Géolocalisation
+    if (city && zipcode && lat && lng) {
+      body.filters.location = {
+        locations: [{
+          city: city,
+          zipcode: zipcode,
+          locationType: 'city',
+          lat: parseFloat(lat),
+          lng: parseFloat(lng),
+          radius: 5000,
+        }],
+      };
+    } else if (department_id) {
+      body.filters.location = {
+        locations: [{
+          department_id: department_id,
+          locationType: 'department',
+        }],
+      };
     }
 
-    // Attendre que le contenu charge
-    try {
-      await page.waitForSelector('#__NEXT_DATA__', { timeout: 10000 });
-    } catch (_) {}
-
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Accepter les cookies si présents
-    try {
-      const consentBtn = await page.evaluateHandle(() => {
-        for (const btn of document.querySelectorAll('button')) {
-          if (btn.textContent?.includes('Accepter')) return btn;
-        }
-        return null;
-      });
-      if (consentBtn && consentBtn.asElement()) {
-        await consentBtn.asElement().click();
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    } catch (_) {}
-
-    // Extraire les données depuis __NEXT_DATA__
-    const result = await page.evaluate(() => {
-      const el = document.getElementById('__NEXT_DATA__');
-      if (!el) return null;
-      try {
-        const json = JSON.parse(el.textContent);
-        const searchData = json?.props?.pageProps?.searchData;
-        if (searchData) return searchData;
-      } catch (_) {}
-      return null;
+    await gotReady;
+    const response = await gotScraping.post({
+      url: 'https://api.leboncoin.fr/finder/search',
+      headers: LBC_HEADERS,
+      json: body,
+      responseType: 'json',
+      headerGeneratorOptions: { browsers: ['chrome'], operatingSystems: ['macos'] },
+      timeout: { request: 15000 },
     });
 
-    await page.close();
+    const result = response.body;
+    const ads = result.ads || [];
 
-    if (result && result.ads && result.ads.length > 0) {
-      const data = { total: result.total || result.ads.length, ads: result.ads, fetchedAt: new Date().toISOString() };
+    if (ads.length > 0) {
+      const data = { total: result.total || ads.length, ads, fetchedAt: new Date().toISOString() };
       lbcCache.set(cacheKey, data);
       saveCache(lbcCache);
-      console.log(`[LBC] ${refresh ? 'Refresh' : 'Fetch'} OK: ${result.ads.length} annonces pour ${cacheKey}`);
+      console.log(`[LBC API] ${refresh ? 'Refresh' : 'Fetch'} OK: ${ads.length} annonces pour ${cacheKey}`);
       res.json(data);
     } else if (lbcCache.has(cacheKey)) {
-      // Si le refresh échoue (captcha), retourner le cache existant
-      console.log(`[LBC] Refresh échoué, retour du cache pour ${cacheKey}`);
+      console.log(`[LBC API] Aucun résultat, retour du cache pour ${cacheKey}`);
       const cached = lbcCache.get(cacheKey);
       res.json({ ...cached, fromCache: true, refreshFailed: true });
     } else {
-      console.log('[LBC] Aucune annonce et pas de cache');
-      res.json({ total: 0, ads: [], error: 'Captcha Datadome non résolu. Ouvrez leboncoin.fr dans votre navigateur pour débloquer votre IP.' });
+      console.log('[LBC API] Aucune annonce trouvée');
+      res.json({ total: 0, ads: [] });
     }
   } catch (err) {
-    if (page) await page.close().catch(() => {});
-    res.status(500).json({ error: 'Erreur Leboncoin (Puppeteer)', details: err.message });
+    console.error('[LBC API] Erreur:', err.response?.statusCode, err.message);
+    if (lbcCache.has(cacheKey)) {
+      const cached = lbcCache.get(cacheKey);
+      return res.json({ ...cached, fromCache: true, refreshFailed: true });
+    }
+    res.status(500).json({ error: 'Erreur API Leboncoin', details: err.message });
   }
 });
 
-// --- Leboncoin: détail d'une annonce (description complète) ---
-const adCache = new Map();
+// --- Leboncoin: détail d'une annonce via API ---
 const AD_CACHE_FILE = path.join(__dirname, '.lbc-ad-cache.json');
 
 function loadAdCache() {
@@ -385,69 +284,40 @@ app.get('/api/leboncoin/ad', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url requis' });
 
-  // Cache
   if (adCacheStore.has(url)) {
     return res.json(adCacheStore.get(url));
   }
 
-  let page;
   try {
-    const b = await getBrowser();
-    page = await b.newPage();
-    try {
-      const session = await page.createCDPSession();
-      const { windowId } = await session.send('Browser.getWindowForTarget');
-      await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
-    } catch (_) {}
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.chrome = { runtime: {} };
-    });
-    await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-    );
-    await page.setViewport({ width: 1366, height: 768 });
-
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-
-    // Gérer captcha si besoin
-    const hasData = await page.$('#__NEXT_DATA__');
-    if (!hasData) {
-      await solveDateDomeSlider(page);
-      try { await page.waitForSelector('#__NEXT_DATA__', { timeout: 15000 }); } catch (_) {}
+    // Extraire l'ID de l'annonce depuis l'URL (ex: /ad/ventes_immobilieres/12345678.htm)
+    const match = url.match(/(\d{6,})\.htm/);
+    if (!match) {
+      return res.status(400).json({ error: 'ID annonce introuvable dans l\'URL' });
     }
 
-    await new Promise(r => setTimeout(r, 2000));
-
-    const adData = await page.evaluate(() => {
-      const el = document.getElementById('__NEXT_DATA__');
-      if (!el) return null;
-      try {
-        const json = JSON.parse(el.textContent);
-        const ad = json?.props?.pageProps?.ad;
-        if (!ad) return null;
-        return {
-          body: ad.body || '',
-          attributes: ad.attributes || [],
-          subject: ad.subject || '',
-        };
-      } catch (_) {}
-      return null;
+    const adId = match[1];
+    await gotReady;
+    const response = await gotScraping({
+      url: `https://api.leboncoin.fr/finder/classified/${adId}`,
+      headers: LBC_HEADERS,
+      responseType: 'json',
+      headerGeneratorOptions: { browsers: ['chrome'], operatingSystems: ['macos'] },
+      timeout: { request: 15000 },
     });
 
-    await page.close();
+    const ad = response.body;
+    const adData = {
+      body: ad.body || '',
+      attributes: ad.attributes || [],
+      subject: ad.subject || '',
+    };
 
-    if (adData) {
-      adCacheStore.set(url, adData);
-      saveAdCache();
-      res.json(adData);
-    } else {
-      res.json({ body: '', attributes: [], error: 'Impossible de charger le détail' });
-    }
+    adCacheStore.set(url, adData);
+    saveAdCache();
+    res.json(adData);
   } catch (err) {
-    if (page) await page.close().catch(() => {});
-    res.status(500).json({ error: 'Erreur détail annonce', details: err.message });
+    console.error('[LBC API] Erreur détail:', err.response?.statusCode, err.message);
+    res.json({ body: '', attributes: [], error: 'Impossible de charger le détail' });
   }
 });
 

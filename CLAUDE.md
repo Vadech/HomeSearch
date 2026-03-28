@@ -8,7 +8,7 @@ Comparateur de prix immobilier qui confronte les annonces Leboncoin au prix rée
 
 ## Commandes
 
-- `npm start` — Démarre le serveur en production (ouvre un navigateur Chromium visible pour le scraping Leboncoin)
+- `npm start` — Démarre le serveur en production
 - `npm run dev` — Démarre avec `--watch` (rechargement automatique)
 - Le serveur écoute sur `http://localhost:3000`
 
@@ -26,7 +26,7 @@ public/
 - `GET /api/communes` — Proxy vers geo.api.gouv.fr (recherche commune par nom, CP ou coordonnées)
 - `GET /api/communes/:code/contour` — Récupère le contour GeoJSON d'une commune
 - `GET /api/dvf` — Télécharge et parse les CSV DVF depuis files.data.gouv.fr (par commune/année)
-- `GET /api/leboncoin` — Scraping via Puppeteer (mode visible obligatoire pour passer Datadome), extrait les données de `__NEXT_DATA__`
+- `GET /api/leboncoin` — Appel direct à l'API Leboncoin (`api.leboncoin.fr/finder/search`)
 
 **Frontend (public/app.js)** — Tout le state est en variables globales. Le flux principal :
 1. L'utilisateur clique sur la carte ou cherche une commune → appel `/api/communes`
@@ -40,9 +40,9 @@ public/
 |--------|---------|-------|
 | geo.api.gouv.fr | API REST (proxy) | Aucune auth, recherche communes + contours GeoJSON |
 | files.data.gouv.fr/geo-dvf | CSV téléchargés | Fichiers par commune/année, parsés côté serveur |
-| leboncoin.fr | Puppeteer (mode visible) | Datadome bloque le headless — le mode visible est requis. Les données sont extraites de `__NEXT_DATA__` (Next.js SSR). Une instance Chromium reste ouverte et est réutilisée entre les requêtes. |
+| leboncoin.fr | API REST directe (`api.leboncoin.fr`) | Appels HTTP directs, pas de navigateur requis. Clé API publique (`api_key` header). |
 
-Le frontend gère gracieusement le cas où Leboncoin est indisponible (affiche "N/A").
+Le frontend gère gracieusement le cas où Leboncoin est indisponible (affiche "N/A"). Plus de dépendance à Puppeteer/Chromium.
 
 ## Langue
 

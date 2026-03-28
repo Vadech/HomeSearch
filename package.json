@@ -16,6 +16,6 @@
     "axios": "^1.13.6",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "puppeteer": "^24.40.0"
+    "got-scraping": "^4.2.1"
   }
 }
