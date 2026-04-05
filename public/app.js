@@ -49,6 +49,49 @@ function isFavorite(adUrl) {
   return !!_favoritesCache[adUrl];
 }
 
+// --- Annonces masquées (persistées sur disque via API) ---
+let _hiddenAdsCache = [];
+
+async function loadHiddenFromDisk() {
+  try {
+    const res = await fetch('/api/hidden');
+    _hiddenAdsCache = await res.json();
+  } catch (_) {
+    _hiddenAdsCache = [];
+  }
+}
+
+function getHiddenAds() {
+  return _hiddenAdsCache;
+}
+
+function saveHiddenAds(list) {
+  _hiddenAdsCache = list;
+  fetch('/api/hidden', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(list),
+  }).catch(() => {});
+}
+
+function toggleHidden(adUrl) {
+  const list = getHiddenAds();
+  const idx = list.indexOf(adUrl);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+  } else {
+    list.push(adUrl);
+  }
+  saveHiddenAds(list);
+  return idx < 0; // true = vient d'être masqué
+}
+
+function isHidden(adUrl) {
+  return _hiddenAdsCache.includes(adUrl);
+}
+
+let showHiddenAds = false;
+
 // Stockage global des annonces pour le système de favoris
 let currentAllListings = [];
 
@@ -68,6 +111,33 @@ document.addEventListener('click', (e) => {
   btn.closest('.listing-item')?.classList.toggle('listing-item--fav', isNowFav);
   updateFavCount();
 });
+
+// Event listener délégué pour les clics sur le bouton masquer
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.hide-btn[data-hide-index]');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.hideIndex);
+  const ad = currentAllListings[idx];
+  if (!ad || !ad.url) return;
+
+  const isNowHidden = toggleHidden(ad.url);
+  const card = btn.closest('.listing-item');
+  if (card) {
+    if (isNowHidden && !showHiddenAds) {
+      card.style.display = 'none';
+    }
+    card.classList.toggle('listing-item--hidden', isNowHidden);
+  }
+  btn.textContent = isNowHidden ? '👁' : '✕';
+  btn.title = isNowHidden ? 'Réafficher' : 'Masquer';
+  updateHiddenCount();
+  updateCategoryCounts();
+});
+
+function updateHiddenCount() {
+  const el = document.getElementById('hidden-count');
+  if (el) el.textContent = getHiddenAds().length;
+}
 
 function updateFavCount() {
   const count = Object.keys(getFavorites()).length;
@@ -156,11 +226,22 @@ async function showAllCached() {
     const res = await fetch('/api/all-cached-ads');
     const data = await res.json();
 
-    // Appliquer les filtres prix/surface
+    // Appliquer les filtres prix/surface + dédoublonner
+    const seenUrls = new Set();
+    const seenKeys = new Set();
     const ads = (data.ads || []).filter(ad => {
       const price = ad.price?.[0];
       const square = Number(getAttr(ad, 'square'));
-      return price >= 500000 && price <= 750000 && square > 120;
+      if (!(price >= 500000 && price <= 750000 && square > 120)) return false;
+      // Dédoublonner par URL
+      if (ad.url && seenUrls.has(ad.url)) return false;
+      // Dédoublonner cross-source par prix + surface + ville
+      const city = ad.location?.city || ad.location?.zipcode || '';
+      const dedupKey = `${price}_${square}_${city}`;
+      if (price && square && seenKeys.has(dedupKey)) return false;
+      if (ad.url) seenUrls.add(ad.url);
+      if (price && square) seenKeys.add(dedupKey);
+      return true;
     });
 
     // Trier par prix/m²
@@ -200,12 +281,16 @@ async function showAllCached() {
       const sourceInfo = SOURCE_LABELS[ad._source] || { name: ad._source, color: '#999' };
       const fav = isFavorite(ad.url);
 
-      return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''}">
+      const hidden = isHidden(ad.url);
+      const hideStyle = hidden && !showHiddenAds ? ' style="display:none"' : '';
+
+      return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
         ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
         <div class="listing-content">
           <div class="listing-top-row">
             <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
             ${ad._isRenov ? '<span class="source-badge source-badge--small" style="background:#d84315">🔨 Travaux</span>' : ''}
+            <button class="hide-btn ${hidden ? 'hide-btn--active' : ''}" data-hide-index="${i}" title="${hidden ? 'Réafficher' : 'Masquer'}">${hidden ? '👁' : '✕'}</button>
             <button class="fav-btn ${fav ? 'fav-btn--active' : ''}" data-fav-index="${i}" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${fav ? '★' : '☆'}</button>
           </div>
           <div class="listing-title">${ad.subject || 'Annonce'}</div>
@@ -222,8 +307,31 @@ async function showAllCached() {
       </div>`;
     }
 
+    // Charger la liste des communes en cache
+    let cachedCommunes = [];
+    try {
+      const ccRes = await fetch('/api/cached-communes');
+      cachedCommunes = await ccRes.json();
+    } catch (_) {}
+
     let html = '<div id="listings-header"><h3>Toutes les annonces en cache (' + ads.length + ')</h3>';
+    html += '<button id="refresh-all-cache-btn">Rafraîchir tout</button>';
     html += '<button id="back-to-results-btn" onclick="backToResults()">Retour</button></div>';
+
+    // Liste des communes en cache
+    if (cachedCommunes.length > 0) {
+      html += '<div id="cached-communes-list">';
+      html += '<h3 class="section-title">Communes en cache</h3>';
+      html += '<div class="communes-tags">';
+      for (const c of cachedCommunes) {
+        const label = c.city ? `${c.city} (${c.zipcode})` : c.zipcode;
+        html += `<span class="commune-tag" data-cache-key="${c.key}">
+          ${label}
+          <button class="commune-tag-delete" data-cache-key="${c.key}" title="Supprimer du cache">✕</button>
+        </span>`;
+      }
+      html += '</div></div>';
+    }
 
     html += `<h3 class="section-title" id="normal-title">${normalAds.length} bien${normalAds.length > 1 ? 's' : ''}</h3>`;
     html += '<div id="normal-listings">';
@@ -238,6 +346,57 @@ async function showAllCached() {
     }
 
     container.innerHTML = html;
+
+    // Bouton supprimer une commune du cache
+    container.querySelectorAll('.commune-tag-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const key = btn.dataset.cacheKey;
+        await fetch(`/api/cache/${encodeURIComponent(key)}`, { method: 'DELETE' });
+        btn.closest('.commune-tag')?.remove();
+        // Recharger la vue
+        showAllCached();
+        loadCachedCommunes();
+      });
+    });
+
+    // Bouton rafraîchir tout le cache
+    document.getElementById('refresh-all-cache-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('refresh-all-cache-btn');
+      btn.disabled = true;
+      btn.textContent = 'Chargement...';
+
+      for (const c of cachedCommunes) {
+        try {
+          const label = c.city || c.zipcode;
+          btn.textContent = `${label}...`;
+          // Trouver la commune via l'API geo
+          const geoRes = await fetch(`/api/communes?codePostal=${c.zipcode}&limit=1`);
+          const communes = await geoRes.json();
+          if (!communes.length) continue;
+          const commune = communes[0];
+          const coords = commune.centre?.coordinates;
+
+          // Rafraîchir Leboncoin + Bien'ici en parallèle
+          const params = new URLSearchParams({
+            city: commune.nom,
+            zipcode: commune.codesPostaux?.[0] || '',
+            department_id: commune.codeDepartement,
+            refresh: '1',
+            ...(coords ? { lat: coords[1], lng: coords[0] } : {}),
+          });
+          await Promise.all([
+            fetch(`/api/leboncoin?${params}`),
+            fetch(`/api/bienici?${params}`),
+          ]);
+        } catch (_) {}
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Rafraîchir tout';
+      // Recharger la vue
+      showAllCached();
+    });
   } catch (_) {
     document.getElementById('panel-loading')?.classList.add('hidden');
     container.innerHTML = '<p class="text-muted">Erreur lors du chargement des annonces en cache</p>';
@@ -256,10 +415,33 @@ function toggleMap() {
 }
 
 // --- Init ---
+function toggleShowHidden() {
+  showHiddenAds = !showHiddenAds;
+  const btn = document.getElementById('hidden-btn-header');
+  if (btn) btn.style.background = showHiddenAds ? '#c62828' : '#757575';
+
+  // Rafraîchir l'affichage des cartes masquées
+  document.querySelectorAll('.listing-item--hidden').forEach(card => {
+    card.style.display = showHiddenAds ? '' : 'none';
+  });
+
+  // Aussi masquer les cartes qui ne sont pas marquées mais sont cachées (premier affichage)
+  document.querySelectorAll('.listing-item[data-url]').forEach(card => {
+    const url = card.dataset.url;
+    if (isHidden(url)) {
+      card.classList.add('listing-item--hidden');
+      card.style.display = showHiddenAds ? '' : 'none';
+    }
+  });
+
+  updateCategoryCounts();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initMap();
-  await loadFavoritesFromDisk();
+  await Promise.all([loadFavoritesFromDisk(), loadHiddenFromDisk()]);
   updateFavCount();
+  updateHiddenCount();
   initSearch();
 
   // Afficher les communes en cache sur la carte
@@ -277,13 +459,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadCachedCommunes() {
   try {
     const res = await fetch('/api/cached-communes');
-    const zipcodes = await res.json();
-    if (!zipcodes.length) return;
+    const entries = await res.json();
+    if (!entries.length) return;
 
     if (cachedCommunesLayer) map.removeLayer(cachedCommunesLayer);
     cachedCommunesLayer = L.layerGroup();
 
-    for (const zip of zipcodes) {
+    for (const entry of entries) {
+      const zip = entry.zipcode || entry;
       try {
         const cRes = await fetch(`/api/communes?codePostal=${zip}&limit=1`);
         const communes = await cRes.json();
@@ -647,8 +830,10 @@ function renderResults(commune, dvf, lbc, bienici) {
 
   lastSources = { lbc, bienici };
 
-  // Fusionner toutes les annonces
+  // Fusionner toutes les annonces avec dédoublonnage
   const allListings = [];
+  const seenUrls = new Set();
+  const seenKeys = new Set();
   const sources = [
     { data: lbc, key: 'leboncoin' },
     { data: bienici, key: 'bienici' },
@@ -657,6 +842,16 @@ function renderResults(commune, dvf, lbc, bienici) {
   for (const s of sources) {
     if (!s.data) continue;
     for (const ad of (s.data.listings || [])) {
+      // Dédoublonner par URL
+      if (ad.url && seenUrls.has(ad.url)) continue;
+      // Dédoublonner cross-source par prix + surface + ville
+      const price = ad.price?.[0];
+      const square = getAttr(ad, 'square');
+      const city = ad.location?.city || ad.location?.zipcode || '';
+      const dedupKey = `${price}_${square}_${city}`;
+      if (price && square && seenKeys.has(dedupKey)) continue;
+      if (ad.url) seenUrls.add(ad.url);
+      if (price && square) seenKeys.add(dedupKey);
       allListings.push({ ...ad, _source: ad.source || s.key });
     }
   }
@@ -731,12 +926,16 @@ function renderResults(commune, dvf, lbc, bienici) {
 
     const fav = isFavorite(ad.url);
 
-    return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''}" data-url="${ad.url || ''}">
+    const hidden = isHidden(ad.url);
+    const hideStyle = hidden && !showHiddenAds ? ' style="display:none"' : '';
+
+    return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
       ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
       <div class="listing-content">
         <div class="listing-top-row">
           <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
           ${ad._isRenov ? '<span class="source-badge source-badge--small" style="background:#d84315">🔨 Travaux</span>' : ''}
+          <button class="hide-btn ${hidden ? 'hide-btn--active' : ''}" data-hide-index="${i}" title="${hidden ? 'Réafficher' : 'Masquer'}">${hidden ? '👁' : '✕'}</button>
           <button class="fav-btn ${fav ? 'fav-btn--active' : ''}" data-fav-index="${i}" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${fav ? '★' : '☆'}</button>
         </div>
         <div class="listing-title">${ad.subject || 'Annonce'}</div>

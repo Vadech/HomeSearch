@@ -476,21 +476,35 @@ app.get('/api/all-cached-ads', (req, res) => {
   res.json({ total: allAds.length, ads: allAds });
 });
 
-// --- Liste des communes en cache ---
+// --- Liste des communes en cache (avec noms) ---
 app.get('/api/cached-communes', (req, res) => {
   const allKeys = new Set([
     ...lbcCache.keys(),
     ...bieniciCache.keys(),
   ]);
-  // Extraire les codes postaux des clés (format "Ville_CP" ou "CP")
-  const zipcodes = new Set();
+  const communes = [];
   for (const key of allKeys) {
     const parts = key.split('_');
     const zip = parts[parts.length - 1];
-    if (/^\d{5}$/.test(zip)) zipcodes.add(zip);
-    else if (/^\d{5}$/.test(key)) zipcodes.add(key);
+    const city = parts.length > 1 ? parts.slice(0, -1).join('_') : '';
+    if (/^\d{5}$/.test(zip)) {
+      communes.push({ key, city, zipcode: zip });
+    } else if (/^\d{5}$/.test(key)) {
+      communes.push({ key, city: '', zipcode: key });
+    }
   }
-  res.json([...zipcodes]);
+  res.json(communes);
+});
+
+// --- Supprimer une commune du cache ---
+app.delete('/api/cache/:key', (req, res) => {
+  const key = req.params.key;
+  lbcCache.delete(key);
+  bieniciCache.delete(key);
+  saveCache(lbcCache);
+  try { fs.writeFileSync(BIENICI_CACHE_FILE, JSON.stringify(Object.fromEntries(bieniciCache)), 'utf-8'); } catch (_) {}
+  console.log(`[Cache] Supprimé: ${key}`);
+  res.json({ ok: true });
 });
 
 // --- Favoris sur disque ---
@@ -511,6 +525,30 @@ app.get('/api/favorites', (req, res) => {
 app.post('/api/favorites', (req, res) => {
   try {
     fs.writeFileSync(FAVORITES_FILE, JSON.stringify(req.body, null, 2), 'utf-8');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Annonces masquées sur disque ---
+const HIDDEN_FILE = path.join(__dirname, '.hidden-ads.json');
+
+app.get('/api/hidden', (req, res) => {
+  try {
+    if (fs.existsSync(HIDDEN_FILE)) {
+      res.json(JSON.parse(fs.readFileSync(HIDDEN_FILE, 'utf-8')));
+    } else {
+      res.json([]);
+    }
+  } catch (_) {
+    res.json([]);
+  }
+});
+
+app.post('/api/hidden', (req, res) => {
+  try {
+    fs.writeFileSync(HIDDEN_FILE, JSON.stringify(req.body, null, 2), 'utf-8');
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

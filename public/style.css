@@ -37,7 +37,7 @@ header h1 {
 /* Search bar */
 #search-bar {
   position: relative;
-  padding: 12px 310px 12px 24px;
+  padding: 12px 440px 12px 24px;
   background: white;
   border-bottom: 1px solid #e0e0e0;
 }
@@ -58,7 +58,7 @@ header h1 {
 
 #see-all-btn {
   position: absolute;
-  right: 290px;
+  right: 400px;
   top: 50%;
   transform: translateY(-50%);
   padding: 6px 12px;
@@ -76,7 +76,7 @@ header h1 {
 
 #fav-btn-header {
   position: absolute;
-  right: 160px;
+  right: 270px;
   top: 50%;
   transform: translateY(-50%);
   padding: 6px 12px;
@@ -90,6 +90,24 @@ header h1 {
 
 #fav-btn-header:hover {
   background: #f57c00;
+}
+
+#hidden-btn-header {
+  position: absolute;
+  right: 160px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  background: #757575;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#hidden-btn-header:hover {
+  background: #616161;
 }
 
 #toggle-map-btn {
@@ -430,6 +448,29 @@ header h1 {
   color: #ff9800;
 }
 
+.hide-btn {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: #ccc;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.hide-btn:hover {
+  color: #c62828;
+}
+
+.hide-btn--active {
+  color: #c62828;
+}
+
+.listing-item--hidden {
+  opacity: 0.45;
+  border-left: 3px solid #bbb;
+}
+
 #back-to-results-btn {
   margin-left: auto;
   padding: 4px 10px;
@@ -618,6 +659,61 @@ header h1 {
 
 .listing-item a:hover {
   text-decoration: underline;
+}
+
+/* Communes en cache */
+.communes-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.commune-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  border-radius: 14px;
+  color: #1565c0;
+  font-weight: 500;
+}
+
+.commune-tag-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #999;
+  font-size: 0.85rem;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.commune-tag-delete:hover {
+  color: #c62828;
+}
+
+#refresh-all-cache-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  background: #4361ee;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#refresh-all-cache-btn:hover {
+  background: #3451d1;
+}
+
+#refresh-all-cache-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Error */
