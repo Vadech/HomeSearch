@@ -851,7 +851,8 @@ async function loadCachedCommunes() {
 }
 
 function initMap() {
-  map = L.map('map').setView([46.6, 2.5], 6); // Centre de la France
+  // Centré sur Montpellier par défaut (zoom métropole)
+  map = L.map('map').setView([43.6108, 3.8767], 11);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',

@@ -903,3 +903,133 @@ body.resizing-panel {
     border-top: 1px solid #e0e0e0;
   }
 }
+
+/* --- Mobile : on cache la carte et on full-width le listing --- */
+@media (max-width: 640px) {
+  #app {
+    height: auto;
+    min-height: 100vh;
+  }
+  #main-content {
+    flex-direction: column;
+    overflow: visible;
+  }
+  /* Carte et resizer masqués */
+  #map-container,
+  #panel-resizer {
+    display: none;
+  }
+  #panel {
+    width: 100%;
+    border-left: none;
+    border-top: none;
+    padding: 12px;
+    overflow-y: visible;
+    height: auto;
+  }
+
+  /* Search bar empilée */
+  #search-bar {
+    padding: 10px 12px;
+  }
+  .search-bar-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .search-input-wrap {
+    flex: 1 1 100%;
+    order: -1;
+  }
+  .search-bar-row button {
+    flex: 1 1 calc(50% - 4px);
+    font-size: 0.78rem;
+    padding: 8px 6px;
+  }
+
+  /* Filtres empilés */
+  .filters-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .filter-group {
+    width: 100%;
+  }
+
+  /* Cartes de stats : 3 colonnes compactes plutôt qu'empilées */
+  #comparison-cards {
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .card {
+    padding: 8px 4px;
+  }
+  .card h3 {
+    font-size: 0.65rem;
+    letter-spacing: 0;
+  }
+  .card-label {
+    font-size: 0.65rem;
+    margin-bottom: 4px;
+  }
+  .card-value {
+    font-size: 1rem;
+  }
+  .card-detail {
+    font-size: 0.65rem;
+  }
+
+  /* Header de la commune */
+  #commune-name {
+    font-size: 1.1rem;
+  }
+
+  /* Listings : thumbnail au-dessus, infos en dessous (carte verticale) */
+  .listing-item {
+    flex-direction: column;
+    gap: 0;
+  }
+  .listing-thumb {
+    width: 100%;
+    height: 180px;
+  }
+  .listing-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .listing-content {
+    padding: 10px;
+  }
+  .listing-top-row {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .listing-item .listing-title {
+    font-size: 0.95rem;
+  }
+
+  /* Header de la liste : éviter que les boutons débordent */
+  #listings-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #listings-header h3 {
+    flex: 1 1 100%;
+    margin-bottom: 4px;
+  }
+  #refresh-all-btn,
+  #refresh-all-cache-btn,
+  #back-to-results-btn,
+  #delete-commune-cache-btn {
+    margin-left: 0;
+    flex: 1 1 auto;
+  }
+
+  /* Tags des communes en cache */
+  .communes-tags {
+    gap: 4px;
+  }
+  .commune-tag {
+    font-size: 0.75rem;
+  }
+}

@@ -2,39 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
-const fs = require('fs');
+const dbSync = require('./lib/db-sync');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Répertoire des données persistées (cache, favoris, etc.)
-// En prod (Render), pointer vers un disque persistant via DATA_DIR=/data
+// Répertoire de backup local (Postgres = source de vérité, fichiers = filet de sécurité).
 const DATA_DIR = process.env.DATA_DIR || __dirname;
-try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
-
-// Migration unique : si DATA_DIR diffère de __dirname et que des fichiers
-// existent déjà dans __dirname mais pas dans DATA_DIR, on les copie une fois.
-if (DATA_DIR !== __dirname) {
-  const filesToMigrate = [
-    '.lbc-cache.json',
-    '.lbc-ad-cache.json',
-    '.bienici-cache.json',
-    '.tram-cache.json',
-    '.favorites.json',
-    '.hidden-ads.json',
-  ];
-  for (const f of filesToMigrate) {
-    const src = path.join(__dirname, f);
-    const dst = path.join(DATA_DIR, f);
-    try {
-      if (fs.existsSync(src) && !fs.existsSync(dst)) {
-        fs.copyFileSync(src, dst);
-        console.log(`[migration] ${f} → ${DATA_DIR}`);
-      }
-    } catch (e) {
-      console.error(`[migration] échec ${f}:`, e.message);
-    }
-  }
-}
+dbSync.init(DATA_DIR);
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
@@ -180,25 +154,11 @@ app.get('/api/dvf', async (req, res) => {
 
 // --- Leboncoin: appels API directs (sans Puppeteer) ---
 
-// Cache des annonces Leboncoin — persisté sur disque
-const CACHE_FILE = path.join(DATA_DIR, '.lbc-cache.json');
-
-function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_FILE)) {
-      return new Map(Object.entries(JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'))));
-    }
-  } catch (_) {}
-  return new Map();
+// Cache des annonces Leboncoin — persisté via Postgres (db-sync)
+const lbcCache = new Map();
+function saveCache() {
+  dbSync.persist('.lbc-cache.json', Object.fromEntries(lbcCache));
 }
-
-function saveCache(cache) {
-  try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(Object.fromEntries(cache)), 'utf-8');
-  } catch (_) {}
-}
-
-const lbcCache = loadCache();
 
 // --- Helpers filtres ---
 function parseFilterParams(query) {
@@ -308,7 +268,7 @@ app.get('/api/leboncoin', async (req, res) => {
     if (ads.length > 0) {
       const data = { total: result.total || ads.length, ads, fetchedAt: new Date().toISOString() };
       lbcCache.set(cacheKey, data);
-      saveCache(lbcCache);
+      saveCache();
       console.log(`[LBC API] ${refresh ? 'Refresh' : 'Fetch'} OK: ${ads.length} annonces pour ${cacheKey}`);
       res.json(data);
     } else if (lbcCache.has(cacheKey)) {
@@ -330,24 +290,10 @@ app.get('/api/leboncoin', async (req, res) => {
 });
 
 // --- Leboncoin: détail d'une annonce via API ---
-const AD_CACHE_FILE = path.join(DATA_DIR, '.lbc-ad-cache.json');
-
-function loadAdCache() {
-  try {
-    if (fs.existsSync(AD_CACHE_FILE)) {
-      return new Map(Object.entries(JSON.parse(fs.readFileSync(AD_CACHE_FILE, 'utf-8'))));
-    }
-  } catch (_) {}
-  return new Map();
-}
-
+const adCacheStore = new Map();
 function saveAdCache() {
-  try {
-    fs.writeFileSync(AD_CACHE_FILE, JSON.stringify(Object.fromEntries(adCacheStore)), 'utf-8');
-  } catch (_) {}
+  dbSync.persist('.lbc-ad-cache.json', Object.fromEntries(adCacheStore));
 }
-
-const adCacheStore = loadAdCache();
 
 app.get('/api/leboncoin/ad', async (req, res) => {
   const { url } = req.query;
@@ -392,8 +338,9 @@ app.get('/api/leboncoin/ad', async (req, res) => {
 
 // --- Bien'ici: API JSON directe ---
 const bieniciCache = new Map();
-const BIENICI_CACHE_FILE = path.join(DATA_DIR, '.bienici-cache.json');
-try { if (fs.existsSync(BIENICI_CACHE_FILE)) Object.entries(JSON.parse(fs.readFileSync(BIENICI_CACHE_FILE, 'utf-8'))).forEach(([k,v]) => bieniciCache.set(k,v)); } catch (_) {}
+function saveBieniciCache() {
+  dbSync.persist('.bienici-cache.json', Object.fromEntries(bieniciCache));
+}
 
 app.get('/api/bienici', async (req, res) => {
   const { city, zipcode, refresh } = req.query;
@@ -462,7 +409,7 @@ app.get('/api/bienici', async (req, res) => {
 
     const data = { total: searchRes.data?.total || ads.length, ads, fetchedAt: new Date().toISOString() };
     bieniciCache.set(cacheKey, data);
-    try { fs.writeFileSync(BIENICI_CACHE_FILE, JSON.stringify(Object.fromEntries(bieniciCache)), 'utf-8'); } catch (_) {}
+    saveBieniciCache();
     console.log(`[Bienici] ${ads.length} annonces pour ${cacheKey}`);
     res.json(data);
   } catch (err) {
@@ -475,8 +422,9 @@ app.get('/api/bienici', async (req, res) => {
 
 // --- Tram: données OSM via Overpass API (avec cache) ---
 const tramCache = new Map();
-const TRAM_CACHE_FILE = path.join(DATA_DIR, '.tram-cache.json');
-try { if (fs.existsSync(TRAM_CACHE_FILE)) Object.entries(JSON.parse(fs.readFileSync(TRAM_CACHE_FILE, 'utf-8'))).forEach(([k,v]) => tramCache.set(k,v)); } catch (_) {}
+function saveTramCache() {
+  dbSync.persist('.tram-cache.json', Object.fromEntries(tramCache));
+}
 
 app.get('/api/tram', async (req, res) => {
   const { lat, lng, radius = 8000 } = req.query;
@@ -522,7 +470,7 @@ app.get('/api/tram', async (req, res) => {
 
       const result = { stops: uniqueStops };
       tramCache.set(cacheKey, result);
-      try { fs.writeFileSync(TRAM_CACHE_FILE, JSON.stringify(Object.fromEntries(tramCache)), 'utf-8'); } catch (_) {}
+      saveTramCache();
       console.log(`[Tram] ${uniqueStops.length} arrêts pour ${cacheKey}`);
       return res.json(result);
     } catch (_) {
@@ -573,86 +521,95 @@ app.get('/api/cached-communes', (req, res) => {
 });
 
 // --- Supprimer une commune du cache ---
-// Si la clé se termine par "|*", supprime toutes les variantes de filtres pour ce préfixe.
+// Si la clé se termine par "|*", supprime toutes les variantes de filtres pour ce préfixe,
+// y compris l'entrée nue (legacy, sans suffixe |...).
 app.delete('/api/cache/:key', (req, res) => {
   const key = req.params.key;
   let removed = 0;
   if (key.endsWith('|*')) {
-    const prefix = key.slice(0, -1); // "city_zip|"
+    const baseKey = key.slice(0, -2); // "city_zip"
+    const prefix = baseKey + '|';
+    const matches = (k) => k === baseKey || k.startsWith(prefix);
     for (const k of [...lbcCache.keys()]) {
-      if (k.startsWith(prefix)) { lbcCache.delete(k); removed++; }
+      if (matches(k)) { lbcCache.delete(k); removed++; }
     }
     for (const k of [...bieniciCache.keys()]) {
-      if (k.startsWith(prefix)) { bieniciCache.delete(k); removed++; }
+      if (matches(k)) { bieniciCache.delete(k); removed++; }
     }
   } else {
     if (lbcCache.delete(key)) removed++;
     if (bieniciCache.delete(key)) removed++;
   }
-  saveCache(lbcCache);
-  try { fs.writeFileSync(BIENICI_CACHE_FILE, JSON.stringify(Object.fromEntries(bieniciCache)), 'utf-8'); } catch (_) {}
+  saveCache();
+  saveBieniciCache();
   console.log(`[Cache] Supprimé: ${key} (${removed} entrées)`);
   res.json({ ok: true, removed });
 });
 
-// --- Favoris sur disque ---
-const FAVORITES_FILE = path.join(DATA_DIR, '.favorites.json');
+// --- Favoris (en mémoire, persistés via db-sync) ---
+let favoritesStore = {};
 
 app.get('/api/favorites', (req, res) => {
-  try {
-    if (fs.existsSync(FAVORITES_FILE)) {
-      res.json(JSON.parse(fs.readFileSync(FAVORITES_FILE, 'utf-8')));
-    } else {
-      res.json({});
-    }
-  } catch (_) {
-    res.json({});
-  }
+  res.json(favoritesStore);
 });
 
 app.post('/api/favorites', (req, res) => {
-  try {
-    fs.writeFileSync(FAVORITES_FILE, JSON.stringify(req.body, null, 2), 'utf-8');
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  favoritesStore = req.body || {};
+  dbSync.persist('.favorites.json', favoritesStore);
+  res.json({ ok: true });
 });
 
-// --- Annonces masquées sur disque ---
-const HIDDEN_FILE = path.join(DATA_DIR, '.hidden-ads.json');
+// --- Annonces masquées (en mémoire, persistées via db-sync) ---
+let hiddenStore = [];
 
 app.get('/api/hidden', (req, res) => {
-  try {
-    if (fs.existsSync(HIDDEN_FILE)) {
-      res.json(JSON.parse(fs.readFileSync(HIDDEN_FILE, 'utf-8')));
-    } else {
-      res.json([]);
-    }
-  } catch (_) {
-    res.json([]);
-  }
+  res.json(hiddenStore);
 });
 
 app.post('/api/hidden', (req, res) => {
-  try {
-    fs.writeFileSync(HIDDEN_FILE, JSON.stringify(req.body, null, 2), 'utf-8');
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  hiddenStore = req.body || [];
+  dbSync.persist('.hidden-ads.json', hiddenStore);
+  res.json({ ok: true });
 });
 
-// Synchronisation périodique vers Postgres (no-op si DATABASE_URL absent)
-const dbSync = require('./lib/db-sync');
-dbSync.startUploadLoop(DATA_DIR, 30000);
+// --- Démarrage : on charge tout depuis Postgres avant d'ouvrir les routes ---
+async function bootstrap() {
+  const [lbc, ad, bie, tram, fav, hid] = await Promise.all([
+    dbSync.load('.lbc-cache.json'),
+    dbSync.load('.lbc-ad-cache.json'),
+    dbSync.load('.bienici-cache.json'),
+    dbSync.load('.tram-cache.json'),
+    dbSync.load('.favorites.json'),
+    dbSync.load('.hidden-ads.json'),
+  ]);
+  if (lbc) Object.entries(lbc).forEach(([k, v]) => lbcCache.set(k, v));
+  if (ad) Object.entries(ad).forEach(([k, v]) => adCacheStore.set(k, v));
+  if (bie) Object.entries(bie).forEach(([k, v]) => bieniciCache.set(k, v));
+  if (tram) Object.entries(tram).forEach(([k, v]) => tramCache.set(k, v));
+  if (fav) favoritesStore = fav;
+  if (hid) hiddenStore = hid;
+  console.log(`[bootstrap] caches chargés — lbc:${lbcCache.size} bie:${bieniciCache.size} ad:${adCacheStore.size} tram:${tramCache.size}`);
 
-app.listen(PORT, () => {
-  console.log(`Serveur démarré sur http://localhost:${PORT}`);
-  if (process.env.DATABASE_URL) {
-    console.log('[db-sync] persistance Postgres active');
-  } else {
-    console.log('[db-sync] DATABASE_URL non défini — mode fichier local uniquement');
+  app.listen(PORT, () => {
+    console.log(`Serveur démarré sur http://localhost:${PORT}`);
+    if (process.env.DATABASE_URL) {
+      console.log('[db-sync] persistance Postgres active (backup local toutes les 5 min)');
+    } else {
+      console.log('[db-sync] DATABASE_URL non défini — fonctionnement en mémoire + backup fichier local');
+    }
+  });
+
+  // Flush final lors d'un shutdown
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.on(sig, async () => {
+      try { await dbSync.flush(); } catch (_) {}
+      process.exit(0);
+    });
   }
+}
+
+bootstrap().catch(err => {
+  console.error('[bootstrap] échec:', err);
+  process.exit(1);
 });
 
