@@ -595,8 +595,12 @@ async function showAllCached() {
     // Stats LBC agrégées (sans travaux / avec travaux)
     const calcPrixM2 = (adsArr) => {
       const vals = adsArr
-        .filter(ad => ad.price?.[0] && Number(getAttr(ad, 'square')) > 0)
-        .map(ad => ad.price[0] / Number(getAttr(ad, 'square')));
+        .map(ad => {
+          const p = Number(ad.price?.[0]);
+          const sq = Number(getAttr(ad, 'square'));
+          return p > 0 && sq > 0 ? p / sq : NaN;
+        })
+        .filter(v => Number.isFinite(v));
       return { avg: trimmedMean(vals), count: adsArr.length };
     };
     const normalStats = calcPrixM2(normalAds);
@@ -1224,11 +1228,16 @@ function renderResults(commune, dvf, lbc, bienici) {
   const normalAds = allListings.filter(a => !a._isRenov);
   const renovAds = allListings.filter(a => a._isRenov);
 
-  // Prix/m² par catégorie
+  // Prix/m² par catégorie (filtre les valeurs non finies pour éviter qu'une annonce
+  // corrompue type price=[[810000, null]] ne contamine la moyenne)
   function calcPrixM2(ads) {
     const vals = ads
-      .filter(ad => ad.price?.[0] && Number(getAttr(ad, 'square')) > 0)
-      .map(ad => ad.price[0] / Number(getAttr(ad, 'square')));
+      .map(ad => {
+        const p = Number(ad.price?.[0]);
+        const sq = Number(getAttr(ad, 'square'));
+        return p > 0 && sq > 0 ? p / sq : NaN;
+      })
+      .filter(v => Number.isFinite(v));
     return { avg: trimmedMean(vals), count: ads.length };
   }
 

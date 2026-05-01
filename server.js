@@ -440,7 +440,8 @@ app.get('/api/bienici', async (req, res) => {
     const ads = (searchRes.data?.realEstateAds || []).map(ad => ({
       source: 'bienici',
       subject: ad.title || `${ad.propertyType === 'house' ? 'Maison' : 'Appartement'} ${ad.roomsQuantity || '?'} pièces ${ad.surfaceArea || '?'} m²`,
-      price: [ad.price],
+      // Bien'ici renvoie parfois price sous forme [810000, null] : on extrait le 1er nombre
+      price: [Array.isArray(ad.price) ? ad.price.find(p => typeof p === 'number') ?? null : ad.price],
       url: `https://www.bienici.com/annonce/${ad.id}`,
       images: { small_url: ad.photos?.[0]?.url || '' },
       attributes: [
