@@ -573,33 +573,30 @@ app.post('/api/hidden', (req, res) => {
 });
 
 // --- Démarrage : on charge tout depuis Postgres avant d'ouvrir les routes ---
+async function loadIntoMap(key, map) {
+  const data = await dbSync.load(key);
+  if (data) for (const [k, v] of Object.entries(data)) map.set(k, v);
+}
+
 async function bootstrap() {
-  const [lbc, ad, bie, tram, fav, hid] = await Promise.all([
-    dbSync.load('.lbc-cache.json'),
-    dbSync.load('.lbc-ad-cache.json'),
-    dbSync.load('.bienici-cache.json'),
-    dbSync.load('.tram-cache.json'),
-    dbSync.load('.favorites.json'),
-    dbSync.load('.hidden-ads.json'),
+  await Promise.all([
+    loadIntoMap('.lbc-cache.json', lbcCache),
+    loadIntoMap('.lbc-ad-cache.json', adCacheStore),
+    loadIntoMap('.bienici-cache.json', bieniciCache),
+    loadIntoMap('.tram-cache.json', tramCache),
+    dbSync.load('.favorites.json').then(v => { if (v) favoritesStore = v; }),
+    dbSync.load('.hidden-ads.json').then(v => { if (v) hiddenStore = v; }),
   ]);
-  if (lbc) Object.entries(lbc).forEach(([k, v]) => lbcCache.set(k, v));
-  if (ad) Object.entries(ad).forEach(([k, v]) => adCacheStore.set(k, v));
-  if (bie) Object.entries(bie).forEach(([k, v]) => bieniciCache.set(k, v));
-  if (tram) Object.entries(tram).forEach(([k, v]) => tramCache.set(k, v));
-  if (fav) favoritesStore = fav;
-  if (hid) hiddenStore = hid;
   console.log(`[bootstrap] caches chargés — lbc:${lbcCache.size} bie:${bieniciCache.size} ad:${adCacheStore.size} tram:${tramCache.size}`);
 
   app.listen(PORT, () => {
     console.log(`Serveur démarré sur http://localhost:${PORT}`);
-    if (process.env.DATABASE_URL) {
-      console.log('[db-sync] persistance Postgres active (backup local toutes les 5 min)');
-    } else {
-      console.log('[db-sync] DATABASE_URL non défini — fonctionnement en mémoire + backup fichier local');
-    }
+    const mode = process.env.DATABASE_URL
+      ? '[db-sync] persistance Postgres active (backup local toutes les 5 min)'
+      : '[db-sync] DATABASE_URL non défini — fonctionnement en mémoire + backup fichier local';
+    console.log(mode);
   });
 
-  // Flush final lors d'un shutdown
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.on(sig, async () => {
       try { await dbSync.flush(); } catch (_) {}

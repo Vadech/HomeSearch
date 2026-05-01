@@ -652,13 +652,13 @@ async function showAllCached() {
 
     html += `<h3 class="section-title" id="normal-title">${normalAds.length} bien${normalAds.length > 1 ? 's' : ''}</h3>`;
     html += '<div id="normal-listings">';
-    html += normalAds.map((ad, idx) => renderCachedCard(ad, ads.indexOf(ad))).join('');
+    html += normalAds.map(ad => renderCachedCard(ad, ads.indexOf(ad))).join('');
     html += '</div>';
 
     if (renovAds.length > 0) {
       html += `<div><h3 class="section-title section-title--renov" id="renov-title">🔨 ${renovAds.length} bien${renovAds.length > 1 ? 's' : ''} avec travaux</h3></div>`;
       html += '<div id="renov-listings">';
-      html += renovAds.map((ad, idx) => renderCachedCard(ad, ads.indexOf(ad))).join('');
+      html += renovAds.map(ad => renderCachedCard(ad, ads.indexOf(ad))).join('');
       html += '</div>';
     }
 
