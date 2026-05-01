@@ -628,7 +628,16 @@ app.post('/api/hidden', (req, res) => {
   }
 });
 
+// Synchronisation périodique vers Postgres (no-op si DATABASE_URL absent)
+const dbSync = require('./lib/db-sync');
+dbSync.startUploadLoop(DATA_DIR, 30000);
+
 app.listen(PORT, () => {
   console.log(`Serveur démarré sur http://localhost:${PORT}`);
+  if (process.env.DATABASE_URL) {
+    console.log('[db-sync] persistance Postgres active');
+  } else {
+    console.log('[db-sync] DATABASE_URL non défini — mode fichier local uniquement');
+  }
 });
 

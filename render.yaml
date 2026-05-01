@@ -2,15 +2,16 @@ services:
   - type: web
     name: homesearch
     runtime: node
-    plan: starter
     buildCommand: npm install
     startCommand: npm start
-    disk:
-      name: homesearch-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATA_DIR
-        value: /data
+        value: /tmp/homesearch
+      # DATABASE_URL : à définir manuellement dans le dashboard Render
+      # Pointer vers une instance Postgres gratuite (Neon, Supabase, etc.)
+      # Format : postgresql://user:pass@host/db?sslmode=require
+      # Sans DATABASE_URL, les données sont éphémères (perdues au redéploiement)
+      - key: DATABASE_URL
+        sync: false
