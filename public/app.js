@@ -571,6 +571,7 @@ async function showAllCached() {
     }
 
     container.innerHTML = html;
+    updateCategoryCounts();
 
     // Bouton supprimer une commune du cache
     container.querySelectorAll('.commune-tag-delete').forEach(btn => {
@@ -1190,6 +1191,7 @@ function renderResults(commune, dvf, lbc, bienici) {
     html += `</div>`;
 
     container.innerHTML = html;
+    updateCategoryCounts();
 
     // Résumés pour Leboncoin (chargés via Puppeteer)
     const lbcAds = allListings.filter(a => a._source === 'leboncoin');
@@ -1340,8 +1342,15 @@ async function loadAdSummaries(lbcAds, allListings) {
 }
 
 function updateCategoryCounts() {
-  const normalCount = document.querySelectorAll('#normal-listings .listing-item').length;
-  const renovCount = document.querySelectorAll('#renov-listings .listing-item').length;
+  const countVisible = (selector) => {
+    let n = 0;
+    document.querySelectorAll(selector).forEach(card => {
+      if (showHiddenAds || !card.classList.contains('listing-item--hidden')) n++;
+    });
+    return n;
+  };
+  const normalCount = countVisible('#normal-listings .listing-item');
+  const renovCount = countVisible('#renov-listings .listing-item');
   const normalTitle = document.getElementById('normal-title');
   const renovTitle = document.getElementById('renov-title');
   if (normalTitle) normalTitle.textContent = `${normalCount} bien${normalCount > 1 ? 's' : ''}`;
