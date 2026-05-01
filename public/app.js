@@ -223,6 +223,12 @@ function resetFilters() {
 function applyPanelWidth(width) {
   const panel = document.getElementById('panel');
   if (!panel) return;
+  // Sur mobile, on ne fixe pas de largeur px (le CSS gère 100%)
+  if (window.innerWidth <= 640) {
+    panel.style.width = '';
+    panel.dataset.responsiveTier = 'compact';
+    return;
+  }
   const min = 320;
   const max = Math.max(min, window.innerWidth - 280);
   const w = Math.min(max, Math.max(min, width));
