@@ -592,6 +592,41 @@ async function showAllCached() {
       cachedCommunes = await ccRes.json();
     } catch (_) {}
 
+    // Stats LBC agrégées (sans travaux / avec travaux)
+    const calcPrixM2 = (adsArr) => {
+      const vals = adsArr
+        .filter(ad => ad.price?.[0] && Number(getAttr(ad, 'square')) > 0)
+        .map(ad => ad.price[0] / Number(getAttr(ad, 'square')));
+      return { avg: trimmedMean(vals), count: adsArr.length };
+    };
+    const normalStats = calcPrixM2(normalAds);
+    const renovStats = calcPrixM2(renovAds);
+    document.getElementById('lbc-price').textContent = normalStats.avg ? `${Math.round(normalStats.avg).toLocaleString('fr-FR')} €/m²` : '--';
+    document.getElementById('lbc-count').textContent = `${normalStats.count} annonces`;
+    document.getElementById('renov-price').textContent = renovStats.avg ? `${Math.round(renovStats.avg).toLocaleString('fr-FR')} €/m²` : '--';
+    document.getElementById('renov-count').textContent = `${renovStats.count} annonces`;
+
+    // Stats DVF agrégées sur toutes les communes en cache (chargées en arrière-plan)
+    document.getElementById('dvf-price').textContent = '...';
+    document.getElementById('dvf-count').textContent = `${cachedCommunes.length} communes`;
+    Promise.all(cachedCommunes.map(async (c) => {
+      try {
+        const geoRes = await fetch(`/api/communes?codePostal=${c.zipcode}&limit=1`);
+        const communes = await geoRes.json();
+        if (!communes.length) return null;
+        return await fetchDVF(communes[0]);
+      } catch (_) { return null; }
+    })).then(results => {
+      const allVentes = [];
+      results.forEach(r => { if (r?.ventes) allVentes.push(...r.ventes); });
+      const prixM2 = allVentes.map((m) => m.valeur_fonciere / m.surface_reelle_bati);
+      const avg = trimmedMean(prixM2);
+      const dvfPriceEl = document.getElementById('dvf-price');
+      const dvfCountEl = document.getElementById('dvf-count');
+      if (dvfPriceEl) dvfPriceEl.textContent = avg ? `${Math.round(avg).toLocaleString('fr-FR')} €/m²` : '--';
+      if (dvfCountEl) dvfCountEl.textContent = `${allVentes.length} ventes`;
+    });
+
     let html = '<div id="listings-header"><h3>Toutes les annonces en cache (' + ads.length + ')</h3>';
     html += '<button id="refresh-all-cache-btn">Rafraîchir tout</button>';
     html += '<button id="back-to-results-btn" onclick="backToResults()">Retour</button></div>';
