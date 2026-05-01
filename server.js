@@ -572,6 +572,19 @@ app.post('/api/hidden', (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Annotations utilisateur sur les annonces (clé = url, valeur = texte) ---
+let annotationsStore = {};
+
+app.get('/api/annotations', (req, res) => {
+  res.json(annotationsStore);
+});
+
+app.post('/api/annotations', (req, res) => {
+  annotationsStore = req.body || {};
+  dbSync.persist('.annotations.json', annotationsStore);
+  res.json({ ok: true });
+});
+
 // --- Démarrage : on charge tout depuis Postgres avant d'ouvrir les routes ---
 async function loadIntoMap(key, map) {
   const data = await dbSync.load(key);
@@ -586,6 +599,7 @@ async function bootstrap() {
     loadIntoMap('.tram-cache.json', tramCache),
     dbSync.load('.favorites.json').then(v => { if (v) favoritesStore = v; }),
     dbSync.load('.hidden-ads.json').then(v => { if (v) hiddenStore = v; }),
+    dbSync.load('.annotations.json').then(v => { if (v) annotationsStore = v; }),
   ]);
   console.log(`[bootstrap] caches chargés — lbc:${lbcCache.size} bie:${bieniciCache.size} ad:${adCacheStore.size} tram:${tramCache.size}`);
 

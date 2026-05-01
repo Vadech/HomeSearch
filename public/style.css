@@ -820,6 +820,51 @@ body.resizing-panel {
   text-decoration: underline;
 }
 
+/* Annotations utilisateur */
+.listing-annotation {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.listing-annotation--has {
+  background: #fff8e1;
+  border-left: 3px solid #f9a825;
+  color: #5d4037;
+}
+
+.listing-annotation-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.annotation-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px dashed #999;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #555;
+}
+
+.annotation-btn:hover {
+  background: #f0f2f5;
+  border-style: solid;
+}
+
+.listing-annotation--has .annotation-btn {
+  border-color: #f9a825;
+  color: #f57c00;
+}
+
 /* Communes en cache */
 .communes-tags {
   display: flex;

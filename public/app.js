@@ -358,6 +358,51 @@ function isHidden(adUrl) {
   return _hiddenAdsCache.includes(adUrl);
 }
 
+// --- Annotations utilisateur (clé = url, valeur = texte libre) ---
+let _annotationsCache = {};
+
+async function loadAnnotationsFromDisk() {
+  try {
+    const res = await fetch('/api/annotations');
+    _annotationsCache = await res.json();
+  } catch (_) {
+    _annotationsCache = {};
+  }
+}
+
+function getAnnotation(adUrl) {
+  return _annotationsCache[adUrl] || '';
+}
+
+function saveAnnotation(adUrl, text) {
+  if (text && text.trim()) {
+    _annotationsCache[adUrl] = text.trim();
+  } else {
+    delete _annotationsCache[adUrl];
+  }
+  fetch('/api/annotations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(_annotationsCache),
+  }).catch(() => {});
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderAnnotationBlock(adUrl) {
+  const note = getAnnotation(adUrl);
+  const safe = escapeHtml(note);
+  const hasNote = !!note;
+  return `<div class="listing-annotation ${hasNote ? 'listing-annotation--has' : ''}" data-annotation-url="${escapeHtml(adUrl)}">
+    <span class="listing-annotation-text">${hasNote ? '📝 ' + safe : ''}</span>
+    <button class="annotation-btn" data-annotation-url="${escapeHtml(adUrl)}" title="${hasNote ? 'Modifier l\'annotation' : 'Ajouter une annotation'}">${hasNote ? '✏️' : '+ Note'}</button>
+  </div>`;
+}
+
 let showHiddenAds = false;
 
 // Stockage global des annonces pour le système de favoris
@@ -378,6 +423,21 @@ document.addEventListener('click', (e) => {
   btn.title = isNowFav ? 'Retirer des favoris' : 'Ajouter aux favoris';
   btn.closest('.listing-item')?.classList.toggle('listing-item--fav', isNowFav);
   updateFavCount();
+});
+
+// Event listener délégué : clic sur "+ Note" ou "✏️" → édite l'annotation
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.annotation-btn[data-annotation-url]');
+  if (!btn) return;
+  const url = btn.dataset.annotationUrl;
+  const current = getAnnotation(url);
+  const next = prompt('Annotation pour ce bien :', current);
+  if (next === null) return; // annulé
+  saveAnnotation(url, next);
+  // Mettre à jour le bloc dans la card
+  const card = btn.closest('.listing-item');
+  const block = card?.querySelector('.listing-annotation');
+  if (block) block.outerHTML = renderAnnotationBlock(url);
 });
 
 // Event listener délégué pour les clics sur le bouton masquer
@@ -455,6 +515,7 @@ function showFavorites() {
             <span class="listing-price">${price?.toLocaleString('fr-FR')} €</span>
             ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
           </div>
+          ${url ? renderAnnotationBlock(url) : ''}
           ${url ? `<a href="${url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
         </div>
       </div>`;
@@ -586,6 +647,7 @@ async function showAllCached() {
             ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
           </div>
           ${tagsHtml}
+          ${ad.url ? renderAnnotationBlock(ad.url) : ''}
           ${ad.url ? `<a href="${ad.url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
         </div>
       </div>`;
@@ -805,7 +867,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMap();
   setupFilters();
   initPanelResizer();
-  await Promise.all([loadFavoritesFromDisk(), loadHiddenFromDisk()]);
+  await Promise.all([loadFavoritesFromDisk(), loadHiddenFromDisk(), loadAnnotationsFromDisk()]);
   updateFavCount();
   updateHiddenCount();
   initSearch();
@@ -1316,6 +1378,7 @@ function renderResults(commune, dvf, lbc, bienici) {
           ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
         </div>
         <div class="listing-summary" id="ad-summary-${i}"><span class="text-muted">Chargement du résumé...</span></div>
+        ${ad.url ? renderAnnotationBlock(ad.url) : ''}
         ${ad.url ? `<a href="${ad.url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
       </div>
     </div>`;
