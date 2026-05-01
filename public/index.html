@@ -10,18 +10,55 @@
 <body>
   <div id="app">
     <div id="search-bar">
-      <input type="text" id="search-input" placeholder="Rechercher une commune..." autocomplete="off" />
-      <ul id="search-results"></ul>
-      <button id="see-all-btn" onclick="showAllCached()">Voir tout</button>
-      <button id="fav-btn-header" onclick="showFavorites()">★ Favoris (<span id="fav-count">0</span>)</button>
-      <button id="hidden-btn-header" onclick="toggleShowHidden()">Masquées (<span id="hidden-count">0</span>)</button>
-      <button id="toggle-map-btn" onclick="toggleMap()">Masquer la carte</button>
+      <div class="search-bar-row">
+        <div class="search-input-wrap">
+          <input type="text" id="search-input" placeholder="Rechercher une commune..." autocomplete="off" />
+          <ul id="search-results"></ul>
+        </div>
+        <button id="filters-btn" onclick="toggleFiltersPanel()">Critères ▾</button>
+        <button id="see-all-btn" onclick="showAllCached()">Voir tout</button>
+        <button id="fav-btn-header" onclick="showFavorites()">★ Favoris (<span id="fav-count">0</span>)</button>
+        <button id="hidden-btn-header" onclick="toggleShowHidden()">Masquées (<span id="hidden-count">0</span>)</button>
+      </div>
+    </div>
+
+    <div id="filters-panel" class="hidden">
+      <div class="filters-row">
+        <div class="filter-group">
+          <label>Prix min (€)</label>
+          <input type="number" id="filter-min-price" min="0" step="10000" />
+        </div>
+        <div class="filter-group">
+          <label>Prix max (€)</label>
+          <input type="number" id="filter-max-price" min="0" step="10000" />
+        </div>
+        <div class="filter-group">
+          <label>Surface min (m²)</label>
+          <input type="number" id="filter-min-surface" min="0" step="5" />
+        </div>
+        <div class="filter-group">
+          <label>Surface max (m²)</label>
+          <input type="number" id="filter-max-surface" min="0" step="5" />
+        </div>
+        <div class="filter-group filter-group--types">
+          <label>Type de bien</label>
+          <div class="filter-types">
+            <label><input type="checkbox" id="filter-type-house" value="house" /> Maison</label>
+            <label><input type="checkbox" id="filter-type-flat" value="flat" /> Appartement</label>
+          </div>
+        </div>
+        <div class="filter-actions">
+          <button id="filters-reset" onclick="resetFilters()">Réinitialiser</button>
+          <button id="filters-apply" onclick="applyFilters()">Appliquer</button>
+        </div>
+      </div>
     </div>
 
     <div id="main-content">
       <div id="map-container">
         <div id="map"></div>
       </div>
+      <div id="panel-resizer" title="Glisser pour redimensionner"></div>
       <div id="panel">
         <div id="panel-placeholder">
           <p>Cliquez sur la carte ou recherchez une commune pour commencer l'analyse.</p>

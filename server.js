@@ -170,10 +170,34 @@ function saveCache(cache) {
 
 const lbcCache = loadCache();
 
+// --- Helpers filtres ---
+function parseFilterParams(query) {
+  const minPrice = query.min_price ? Number(query.min_price) : null;
+  const maxPrice = query.max_price ? Number(query.max_price) : null;
+  const minSurface = query.min_surface ? Number(query.min_surface) : null;
+  const maxSurface = query.max_surface ? Number(query.max_surface) : null;
+  const propertyTypes = query.property_types
+    ? String(query.property_types).split(',').map(s => s.trim()).filter(Boolean)
+    : ['house', 'flat'];
+  return { minPrice, maxPrice, minSurface, maxSurface, propertyTypes };
+}
+
+function filterCacheSuffix(f) {
+  return [
+    f.minPrice ?? '',
+    f.maxPrice ?? '',
+    f.minSurface ?? '',
+    f.maxSurface ?? '',
+    (f.propertyTypes || []).join('+'),
+  ].join('-');
+}
+
 app.get('/api/leboncoin', async (req, res) => {
   const { city, zipcode, department_id, lat, lng, refresh } = req.query;
+  const filters = parseFilterParams(req.query);
 
-  const cacheKey = city ? `${city}_${zipcode}` : (zipcode || department_id || 'all');
+  const baseKey = city ? `${city}_${zipcode}` : (zipcode || department_id || 'all');
+  const cacheKey = `${baseKey}|${filterCacheSuffix(filters)}`;
 
   if (!refresh && lbcCache.has(cacheKey)) {
     const cached = lbcCache.get(cacheKey);
@@ -181,6 +205,24 @@ app.get('/api/leboncoin', async (req, res) => {
   }
 
   try {
+    // Mapper nos types vers les codes LBC
+    const lbcTypeMap = { house: '1', flat: '2' };
+    const realEstateTypes = (filters.propertyTypes || [])
+      .map(t => lbcTypeMap[t])
+      .filter(Boolean);
+
+    const ranges = {};
+    if (filters.minPrice != null || filters.maxPrice != null) {
+      ranges.price = {};
+      if (filters.minPrice != null) ranges.price.min = filters.minPrice;
+      if (filters.maxPrice != null) ranges.price.max = filters.maxPrice;
+    }
+    if (filters.minSurface != null || filters.maxSurface != null) {
+      ranges.square = {};
+      if (filters.minSurface != null) ranges.square.min = filters.minSurface;
+      if (filters.maxSurface != null) ranges.square.max = filters.maxSurface;
+    }
+
     // Construire la requête pour l'API Leboncoin
     const body = {
       limit: 50,
@@ -188,13 +230,10 @@ app.get('/api/leboncoin', async (req, res) => {
       filters: {
         category: { id: '9' },  // Ventes immobilières
         enums: {
-          real_estate_type: ['1', '2'],  // Maison, Appartement
+          real_estate_type: realEstateTypes.length ? realEstateTypes : ['1', '2'],
           ad_type: ['offer'],
         },
-        ranges: {
-          price: { min: 500000, max: 750000 },
-          square: { min: 120 },
-        },
+        ranges,
         location: {},
         keywords: {},
       },
@@ -328,7 +367,9 @@ try { if (fs.existsSync(BIENICI_CACHE_FILE)) Object.entries(JSON.parse(fs.readFi
 
 app.get('/api/bienici', async (req, res) => {
   const { city, zipcode, refresh } = req.query;
-  const cacheKey = city ? `${city}_${zipcode}` : (zipcode || 'all');
+  const userFilters = parseFilterParams(req.query);
+  const baseKey = city ? `${city}_${zipcode}` : (zipcode || 'all');
+  const cacheKey = `${baseKey}|${filterCacheSuffix(userFilters)}`;
 
   if (!refresh && bieniciCache.has(cacheKey)) {
     return res.json({ ...bieniciCache.get(cacheKey), fromCache: true });
@@ -347,15 +388,16 @@ app.get('/api/bienici', async (req, res) => {
       page: 1,
       from: 0,
       filterType: 'buy',
-      propertyType: ['house', 'flat'],
-      minPrice: 500000,
-      maxPrice: 750000,
-      minArea: 120,
+      propertyType: userFilters.propertyTypes?.length ? userFilters.propertyTypes : ['house', 'flat'],
       onTheMarket: [true],
       zoneIdsByTypes: { zoneIds: zone.zoneIds },
       sortBy: 'relevance',
       sortOrder: 'desc',
     };
+    if (userFilters.minPrice != null) filters.minPrice = userFilters.minPrice;
+    if (userFilters.maxPrice != null) filters.maxPrice = userFilters.maxPrice;
+    if (userFilters.minSurface != null) filters.minArea = userFilters.minSurface;
+    if (userFilters.maxSurface != null) filters.maxArea = userFilters.maxSurface;
 
     const searchRes = await axios.get('https://www.bienici.com/realEstateAds.json', {
       params: { filters: JSON.stringify(filters) },
@@ -384,6 +426,7 @@ app.get('/api/bienici', async (req, res) => {
         city_label: `${ad.city || ''} ${ad.postalCode || ''}`,
       },
       body: ad.description || '',
+      first_publication_date: ad.publicationDate || ad.firstPublicationDate || ad.modificationDate || null,
     }));
 
     const data = { total: searchRes.data?.total || ads.length, ads, fetchedAt: new Date().toISOString() };

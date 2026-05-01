@@ -4,10 +4,225 @@ let communeLayer = null;
 let selectedCommune = null;
 let searchTimeout = null;
 let lastDvfData = null;
-let mapVisible = true;
 let dvfMarkersLayer = null;
 let tramLayer = null;
 let cachedCommunesLayer = null;
+
+// --- Filtres de recherche (paramétrables) ---
+const DEFAULT_FILTERS = {
+  minPrice: 500000,
+  maxPrice: 750000,
+  minSurface: 120,
+  maxSurface: null,
+  propertyTypes: ['house', 'flat'],
+};
+
+function getFilters() {
+  try {
+    const raw = localStorage.getItem('homeSearchFilters');
+    if (!raw) return { ...DEFAULT_FILTERS };
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_FILTERS, ...parsed };
+  } catch (_) {
+    return { ...DEFAULT_FILTERS };
+  }
+}
+
+function saveFilters(f) {
+  localStorage.setItem('homeSearchFilters', JSON.stringify(f));
+}
+
+// Construit les query params filtres pour les API
+function filterQueryParams() {
+  const f = getFilters();
+  const params = {};
+  if (f.minPrice != null && f.minPrice !== '') params.min_price = f.minPrice;
+  if (f.maxPrice != null && f.maxPrice !== '') params.max_price = f.maxPrice;
+  if (f.minSurface != null && f.minSurface !== '') params.min_surface = f.minSurface;
+  if (f.maxSurface != null && f.maxSurface !== '') params.max_surface = f.maxSurface;
+  if (f.propertyTypes?.length) params.property_types = f.propertyTypes.join(',');
+  return params;
+}
+
+// Mappe le real_estate_type LBC ('1','2') vers nos codes ('house','flat')
+function adPropertyType(ad) {
+  const t = getAttr(ad, 'real_estate_type');
+  if (t === '1') return 'house';
+  if (t === '2') return 'flat';
+  return null;
+}
+
+// Vérifie qu'une annonce passe les filtres courants
+function matchesFilters(ad) {
+  const f = getFilters();
+  const price = ad.price?.[0];
+  const square = Number(getAttr(ad, 'square'));
+  if (f.minPrice && (!price || price < f.minPrice)) return false;
+  if (f.maxPrice && (!price || price > f.maxPrice)) return false;
+  if (f.minSurface && (!square || square < f.minSurface)) return false;
+  if (f.maxSurface && (!square || square > f.maxSurface)) return false;
+  if (f.propertyTypes?.length) {
+    const t = adPropertyType(ad);
+    if (t && !f.propertyTypes.includes(t)) return false;
+  }
+  return true;
+}
+
+function matchesFiltersDvf(m) {
+  const f = getFilters();
+  const v = m.valeur_fonciere;
+  const s = m.surface_reelle_bati;
+  if (f.minPrice && v < f.minPrice) return false;
+  if (f.maxPrice && v > f.maxPrice) return false;
+  if (f.minSurface && s < f.minSurface) return false;
+  if (f.maxSurface && s > f.maxSurface) return false;
+  if (f.propertyTypes?.length) {
+    const wantHouse = f.propertyTypes.includes('house');
+    const wantFlat = f.propertyTypes.includes('flat');
+    if (m.type_local === 'Maison' && !wantHouse) return false;
+    if (m.type_local === 'Appartement' && !wantFlat) return false;
+    if (m.type_local !== 'Maison' && m.type_local !== 'Appartement') return false;
+  } else {
+    if (m.type_local !== 'Maison' && m.type_local !== 'Appartement') return false;
+  }
+  return true;
+}
+
+// --- Date de mise en ligne ---
+function adPublishedAt(ad) {
+  const raw = ad.first_publication_date || ad.index_date || ad.publicationDate || ad._publishedAt;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatRelativeDate(date) {
+  if (!date) return '';
+  const diffMs = Date.now() - date.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays < 0) return date.toLocaleDateString('fr-FR');
+  if (diffDays === 0) return "aujourd'hui";
+  if (diffDays === 1) return 'hier';
+  if (diffDays < 7) return `il y a ${diffDays} j`;
+  if (diffDays < 30) return `il y a ${Math.floor(diffDays / 7)} sem.`;
+  if (diffDays < 365) return `il y a ${Math.floor(diffDays / 30)} mois`;
+  return date.toLocaleDateString('fr-FR');
+}
+
+function setupFilters() {
+  const f = getFilters();
+  const setVal = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.value = v == null ? '' : v;
+  };
+  setVal('filter-min-price', f.minPrice);
+  setVal('filter-max-price', f.maxPrice);
+  setVal('filter-min-surface', f.minSurface);
+  setVal('filter-max-surface', f.maxSurface);
+  const elHouse = document.getElementById('filter-type-house');
+  const elFlat = document.getElementById('filter-type-flat');
+  if (elHouse) elHouse.checked = f.propertyTypes?.includes('house');
+  if (elFlat) elFlat.checked = f.propertyTypes?.includes('flat');
+}
+
+function readFiltersFromUI() {
+  const num = (id) => {
+    const v = document.getElementById(id)?.value;
+    return v === '' || v == null ? null : Number(v);
+  };
+  const types = [];
+  if (document.getElementById('filter-type-house')?.checked) types.push('house');
+  if (document.getElementById('filter-type-flat')?.checked) types.push('flat');
+  return {
+    minPrice: num('filter-min-price'),
+    maxPrice: num('filter-max-price'),
+    minSurface: num('filter-min-surface'),
+    maxSurface: num('filter-max-surface'),
+    propertyTypes: types,
+  };
+}
+
+function toggleFiltersPanel() {
+  const panel = document.getElementById('filters-panel');
+  const btn = document.getElementById('filters-btn');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+  btn?.classList.toggle('active', !panel.classList.contains('hidden'));
+}
+
+async function applyFilters() {
+  const next = readFiltersFromUI();
+  saveFilters(next);
+  // Recharger la vue selon le contexte
+  if (selectedCommune) {
+    const [dvfData, lbcData, bieniciData] = await Promise.all([
+      fetchDVF(selectedCommune),
+      fetchLeboncoin(selectedCommune),
+      fetchBienici(selectedCommune),
+    ]);
+    lastDvfData = dvfData;
+    renderResults(selectedCommune, dvfData, lbcData, bieniciData);
+  } else {
+    showAllCached();
+  }
+}
+
+function resetFilters() {
+  saveFilters({ ...DEFAULT_FILTERS });
+  setupFilters();
+}
+
+// --- Resize horizontal de la carte / panel ---
+function applyPanelWidth(width) {
+  const panel = document.getElementById('panel');
+  if (!panel) return;
+  const min = 320;
+  const max = Math.max(min, window.innerWidth - 280);
+  const w = Math.min(max, Math.max(min, width));
+  panel.style.width = w + 'px';
+  panel.dataset.responsiveTier = w >= 680 ? 'wide' : (w >= 500 ? 'medium' : 'compact');
+  if (map) map.invalidateSize();
+}
+
+function initPanelResizer() {
+  const resizer = document.getElementById('panel-resizer');
+  const panel = document.getElementById('panel');
+  if (!resizer || !panel) return;
+
+  // Restaurer la largeur sauvegardée
+  const saved = Number(localStorage.getItem('homeSearchPanelWidth'));
+  if (saved && saved > 200) applyPanelWidth(saved);
+  else applyPanelWidth(panel.getBoundingClientRect().width);
+
+  let dragging = false;
+
+  resizer.addEventListener('mousedown', (e) => {
+    dragging = true;
+    resizer.classList.add('resizing');
+    document.body.classList.add('resizing-panel');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const newWidth = window.innerWidth - e.clientX - 3; // 3 = moitié largeur resizer
+    applyPanelWidth(newWidth);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('resizing');
+    document.body.classList.remove('resizing-panel');
+    const w = panel.getBoundingClientRect().width;
+    localStorage.setItem('homeSearchPanelWidth', String(Math.round(w)));
+  });
+
+  window.addEventListener('resize', () => {
+    const w = panel.getBoundingClientRect().width;
+    applyPanelWidth(w);
+  });
+}
 
 // --- Favoris (persistés sur disque via API) ---
 let _favoritesCache = {};
@@ -230,9 +445,9 @@ async function showAllCached() {
     const seenUrls = new Set();
     const seenKeys = new Set();
     const ads = (data.ads || []).filter(ad => {
+      if (!matchesFilters(ad)) return false;
       const price = ad.price?.[0];
       const square = Number(getAttr(ad, 'square'));
-      if (!(price >= 500000 && price <= 750000 && square > 120)) return false;
       // Dédoublonner par URL
       if (ad.url && seenUrls.has(ad.url)) return false;
       // Dédoublonner cross-source par prix + surface + ville
@@ -244,8 +459,13 @@ async function showAllCached() {
       return true;
     });
 
-    // Trier par prix/m²
+    // Trier par date de publication (récentes d'abord), fallback prix/m²
     ads.sort((a, b) => {
+      const dA = adPublishedAt(a);
+      const dB = adPublishedAt(b);
+      if (dA && dB) return dB - dA;
+      if (dA) return -1;
+      if (dB) return 1;
       const pA = a.price?.[0] / Number(getAttr(a, 'square')) || Infinity;
       const pB = b.price?.[0] / Number(getAttr(b, 'square')) || Infinity;
       return pA - pB;
@@ -284,12 +504,17 @@ async function showAllCached() {
       const hidden = isHidden(ad.url);
       const hideStyle = hidden && !showHiddenAds ? ' style="display:none"' : '';
 
+      const pubDate = adPublishedAt(ad);
+      const pubLabel = pubDate ? formatRelativeDate(pubDate) : '';
+      const pubTitle = pubDate ? pubDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
+
       return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
         ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
         <div class="listing-content">
           <div class="listing-top-row">
             <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
             ${ad._isRenov ? '<span class="source-badge source-badge--small" style="background:#d84315">🔨 Travaux</span>' : ''}
+            ${pubLabel ? `<span class="listing-date" title="${pubTitle}">📅 ${pubLabel}</span>` : ''}
             <button class="hide-btn ${hidden ? 'hide-btn--active' : ''}" data-hide-index="${i}" title="${hidden ? 'Réafficher' : 'Masquer'}">${hidden ? '👁' : '✕'}</button>
             <button class="fav-btn ${fav ? 'fav-btn--active' : ''}" data-fav-index="${i}" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${fav ? '★' : '☆'}</button>
           </div>
@@ -384,6 +609,7 @@ async function showAllCached() {
             department_id: commune.codeDepartement,
             refresh: '1',
             ...(coords ? { lat: coords[1], lng: coords[0] } : {}),
+            ...filterQueryParams(),
           });
           await Promise.all([
             fetch(`/api/leboncoin?${params}`),
@@ -400,17 +626,6 @@ async function showAllCached() {
   } catch (_) {
     document.getElementById('panel-loading')?.classList.add('hidden');
     container.innerHTML = '<p class="text-muted">Erreur lors du chargement des annonces en cache</p>';
-  }
-}
-
-function toggleMap() {
-  const container = document.getElementById('map-container');
-  const btn = document.getElementById('toggle-map-btn');
-  mapVisible = !mapVisible;
-  container.classList.toggle('hidden', !mapVisible);
-  btn.textContent = mapVisible ? 'Masquer la carte' : 'Afficher la carte';
-  if (mapVisible) {
-    setTimeout(() => map.invalidateSize(), 100);
   }
 }
 
@@ -439,6 +654,8 @@ function toggleShowHidden() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initMap();
+  setupFilters();
+  initPanelResizer();
   await Promise.all([loadFavoritesFromDisk(), loadHiddenFromDisk()]);
   updateFavCount();
   updateHiddenCount();
@@ -651,11 +868,7 @@ async function fetchDVF(commune) {
     const res = await fetch(`/api/dvf?code_commune=${commune.code}&annee_min=${currentYear - 3}&annee_max=${currentYear}`);
     const data = await res.json();
 
-    const ventes = (Array.isArray(data) ? data : []).filter(
-      (m) => m.valeur_fonciere >= 500000 && m.valeur_fonciere <= 750000 &&
-        m.surface_reelle_bati > 120 &&
-        (m.type_local === 'Appartement' || m.type_local === 'Maison')
-    );
+    const ventes = (Array.isArray(data) ? data : []).filter(matchesFiltersDvf);
 
     const prixM2 = ventes.map((m) => m.valeur_fonciere / m.surface_reelle_bati);
     const avg = trimmedMean(prixM2);
@@ -684,6 +897,7 @@ async function fetchLeboncoin(commune, refresh = false) {
       department_id: commune.codeDepartement,
       ...(coords ? { lat: coords[1], lng: coords[0] } : {}),
       ...(refresh ? { refresh: '1' } : {}),
+      ...filterQueryParams(),
     });
 
     const res = await fetch(`/api/leboncoin?${params}`);
@@ -693,11 +907,7 @@ async function fetchLeboncoin(commune, refresh = false) {
       return { avgPrixM2: null, count: 0, listings: [], error: data.hint || data.error };
     }
 
-    const ads = (data.ads || []).filter((ad) => {
-      const price = ad.price?.[0];
-      const square = Number(getAttr(ad, 'square'));
-      return price >= 500000 && price <= 750000 && square > 120;
-    });
+    const ads = (data.ads || []).filter(matchesFilters);
 
     const prixM2 = ads
       .filter((ad) => ad.price?.[0] && Number(getAttr(ad, 'square')) > 0)
@@ -734,14 +944,11 @@ async function fetchExternalSource(endpoint, commune, refresh, source) {
       zipcode: commune.codesPostaux?.[0] || '',
       department_id: commune.codeDepartement,
       ...(refresh ? { refresh: '1' } : {}),
+      ...filterQueryParams(),
     });
     const res = await fetch(`${endpoint}?${params}`);
     const data = await res.json();
-    const ads = (data.ads || []).filter((ad) => {
-      const price = ad.price?.[0];
-      const square = Number(getAttr(ad, 'square'));
-      return price >= 500000 && price <= 750000 && square > 120;
-    });
+    const ads = (data.ads || []).filter(matchesFilters);
 
     return {
       source,
@@ -856,8 +1063,13 @@ function renderResults(commune, dvf, lbc, bienici) {
     }
   }
 
-  // Trier par prix au m² croissant
+  // Trier par date de publication (récentes d'abord), fallback prix/m²
   allListings.sort((a, b) => {
+    const dA = adPublishedAt(a);
+    const dB = adPublishedAt(b);
+    if (dA && dB) return dB - dA;
+    if (dA) return -1;
+    if (dB) return 1;
     const pA = a.price?.[0] && Number(getAttr(a, 'square')) > 0 ? a.price[0] / Number(getAttr(a, 'square')) : Infinity;
     const pB = b.price?.[0] && Number(getAttr(b, 'square')) > 0 ? b.price[0] / Number(getAttr(b, 'square')) : Infinity;
     return pA - pB;
@@ -929,12 +1141,17 @@ function renderResults(commune, dvf, lbc, bienici) {
     const hidden = isHidden(ad.url);
     const hideStyle = hidden && !showHiddenAds ? ' style="display:none"' : '';
 
+    const pubDate = adPublishedAt(ad);
+    const pubLabel = pubDate ? formatRelativeDate(pubDate) : '';
+    const pubTitle = pubDate ? pubDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
+
     return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
       ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
       <div class="listing-content">
         <div class="listing-top-row">
           <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
           ${ad._isRenov ? '<span class="source-badge source-badge--small" style="background:#d84315">🔨 Travaux</span>' : ''}
+          ${pubLabel ? `<span class="listing-date" title="${pubTitle}">📅 ${pubLabel}</span>` : ''}
           <button class="hide-btn ${hidden ? 'hide-btn--active' : ''}" data-hide-index="${i}" title="${hidden ? 'Réafficher' : 'Masquer'}">${hidden ? '👁' : '✕'}</button>
           <button class="fav-btn ${fav ? 'fav-btn--active' : ''}" data-fav-index="${i}" title="${fav ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${fav ? '★' : '☆'}</button>
         </div>

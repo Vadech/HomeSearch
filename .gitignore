@@ -9,3 +9,4 @@ node_modules/
 .seloger-cache.json
 .tram-cache.json
 .favorites.json
+.hidden-ads.json
