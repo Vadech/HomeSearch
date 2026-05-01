@@ -418,10 +418,12 @@ document.addEventListener('click', (e) => {
 
   const adData = { subject: ad.subject, price: ad.price, url: ad.url, images: ad.images, attributes: ad.attributes, location: ad.location, _source: ad._source };
   const isNowFav = toggleFavorite(ad.url, adData);
-  btn.textContent = isNowFav ? '★' : '☆';
-  btn.classList.toggle('fav-btn--active', isNowFav);
-  btn.title = isNowFav ? 'Retirer des favoris' : 'Ajouter aux favoris';
-  btn.closest('.listing-item')?.classList.toggle('listing-item--fav', isNowFav);
+  // La vue principale exclut les favoris : on retire la card dès qu'elle devient favorite.
+  // (la vue Favoris utilise un handler inline, donc ce code ne s'y exécute pas.)
+  if (isNowFav) {
+    btn.closest('.listing-item')?.remove();
+    updateCategoryCounts();
+  }
   updateFavCount();
 });
 
@@ -571,7 +573,7 @@ async function showAllCached() {
       if (ad.url) seenUrls.add(ad.url);
       if (price && square) seenKeys.add(dedupKey);
       return true;
-    });
+    }).filter(ad => !isFavorite(ad.url)); // Les favoris ne s'affichent que dans la vue Favoris
 
     // Trier par date de publication (récentes d'abord), fallback prix/m²
     ads.sort((a, b) => {
@@ -764,7 +766,7 @@ async function showAllCached() {
           if (ad.url) seenU.add(ad.url);
           if (p && sq) seenK.add(dk);
           return true;
-        });
+        }).filter(ad => !isFavorite(ad.url));
         newAds.sort((a, b) => {
           const dA = adPublishedAt(a), dB = adPublishedAt(b);
           if (dA && dB) return dB - dA;
@@ -1266,6 +1268,8 @@ function renderResults(commune, dvf, lbc, bienici) {
       if (price && square && seenKeys.has(dedupKey)) continue;
       if (ad.url) seenUrls.add(ad.url);
       if (price && square) seenKeys.add(dedupKey);
+      // Les favoris ne s'affichent que dans la vue Favoris
+      if (isFavorite(ad.url)) continue;
       allListings.push({ ...ad, _source: ad.source || s.key });
     }
   }
