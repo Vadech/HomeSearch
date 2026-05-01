@@ -6,8 +6,38 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Répertoire des données persistées (cache, favoris, etc.)
+// En prod (Render), pointer vers un disque persistant via DATA_DIR=/data
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
+
+// Migration unique : si DATA_DIR diffère de __dirname et que des fichiers
+// existent déjà dans __dirname mais pas dans DATA_DIR, on les copie une fois.
+if (DATA_DIR !== __dirname) {
+  const filesToMigrate = [
+    '.lbc-cache.json',
+    '.lbc-ad-cache.json',
+    '.bienici-cache.json',
+    '.tram-cache.json',
+    '.favorites.json',
+    '.hidden-ads.json',
+  ];
+  for (const f of filesToMigrate) {
+    const src = path.join(__dirname, f);
+    const dst = path.join(DATA_DIR, f);
+    try {
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst);
+        console.log(`[migration] ${f} → ${DATA_DIR}`);
+      }
+    } catch (e) {
+      console.error(`[migration] échec ${f}:`, e.message);
+    }
+  }
+}
+
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Client HTTP pour Leboncoin (got-scraping pour le fingerprint TLS Chrome) ---
@@ -151,7 +181,7 @@ app.get('/api/dvf', async (req, res) => {
 // --- Leboncoin: appels API directs (sans Puppeteer) ---
 
 // Cache des annonces Leboncoin — persisté sur disque
-const CACHE_FILE = path.join(__dirname, '.lbc-cache.json');
+const CACHE_FILE = path.join(DATA_DIR, '.lbc-cache.json');
 
 function loadCache() {
   try {
@@ -300,7 +330,7 @@ app.get('/api/leboncoin', async (req, res) => {
 });
 
 // --- Leboncoin: détail d'une annonce via API ---
-const AD_CACHE_FILE = path.join(__dirname, '.lbc-ad-cache.json');
+const AD_CACHE_FILE = path.join(DATA_DIR, '.lbc-ad-cache.json');
 
 function loadAdCache() {
   try {
@@ -362,7 +392,7 @@ app.get('/api/leboncoin/ad', async (req, res) => {
 
 // --- Bien'ici: API JSON directe ---
 const bieniciCache = new Map();
-const BIENICI_CACHE_FILE = path.join(__dirname, '.bienici-cache.json');
+const BIENICI_CACHE_FILE = path.join(DATA_DIR, '.bienici-cache.json');
 try { if (fs.existsSync(BIENICI_CACHE_FILE)) Object.entries(JSON.parse(fs.readFileSync(BIENICI_CACHE_FILE, 'utf-8'))).forEach(([k,v]) => bieniciCache.set(k,v)); } catch (_) {}
 
 app.get('/api/bienici', async (req, res) => {
@@ -444,7 +474,7 @@ app.get('/api/bienici', async (req, res) => {
 
 // --- Tram: données OSM via Overpass API (avec cache) ---
 const tramCache = new Map();
-const TRAM_CACHE_FILE = path.join(__dirname, '.tram-cache.json');
+const TRAM_CACHE_FILE = path.join(DATA_DIR, '.tram-cache.json');
 try { if (fs.existsSync(TRAM_CACHE_FILE)) Object.entries(JSON.parse(fs.readFileSync(TRAM_CACHE_FILE, 'utf-8'))).forEach(([k,v]) => tramCache.set(k,v)); } catch (_) {}
 
 app.get('/api/tram', async (req, res) => {
@@ -551,7 +581,7 @@ app.delete('/api/cache/:key', (req, res) => {
 });
 
 // --- Favoris sur disque ---
-const FAVORITES_FILE = path.join(__dirname, '.favorites.json');
+const FAVORITES_FILE = path.join(DATA_DIR, '.favorites.json');
 
 app.get('/api/favorites', (req, res) => {
   try {
@@ -575,7 +605,7 @@ app.post('/api/favorites', (req, res) => {
 });
 
 // --- Annonces masquées sur disque ---
-const HIDDEN_FILE = path.join(__dirname, '.hidden-ads.json');
+const HIDDEN_FILE = path.join(DATA_DIR, '.hidden-ads.json');
 
 app.get('/api/hidden', (req, res) => {
   try {
