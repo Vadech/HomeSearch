@@ -768,13 +768,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Afficher les communes en cache sur la carte
   loadCachedCommunes();
 
-  // Charger Le Crès (34920) par défaut
-  try {
-    const res = await fetch('/api/communes?codePostal=34920&limit=1');
-    const communes = await res.json();
-    const leCres = communes.find(c => c.nom.includes('Crès')) || communes[0];
-    if (leCres) selectCommune(leCres);
-  } catch (_) {}
+  // Vue par défaut : toutes les annonces de toutes les communes en cache
+  showAllCached();
 });
 
 async function loadCachedCommunes() {
