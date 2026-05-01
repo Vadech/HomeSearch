@@ -555,29 +555,43 @@ app.get('/api/cached-communes', (req, res) => {
     ...lbcCache.keys(),
     ...bieniciCache.keys(),
   ]);
-  const communes = [];
+  // Dédoublonner par baseKey (city_zip), peu importe les filtres
+  const byBase = new Map();
   for (const key of allKeys) {
-    const parts = key.split('_');
+    const baseKey = key.split('|')[0];
+    const parts = baseKey.split('_');
     const zip = parts[parts.length - 1];
     const city = parts.length > 1 ? parts.slice(0, -1).join('_') : '';
     if (/^\d{5}$/.test(zip)) {
-      communes.push({ key, city, zipcode: zip });
-    } else if (/^\d{5}$/.test(key)) {
-      communes.push({ key, city: '', zipcode: key });
+      byBase.set(baseKey, { key, city, zipcode: zip });
+    } else if (/^\d{5}$/.test(baseKey)) {
+      byBase.set(baseKey, { key, city: '', zipcode: baseKey });
     }
   }
-  res.json(communes);
+  res.json([...byBase.values()]);
 });
 
 // --- Supprimer une commune du cache ---
+// Si la clé se termine par "|*", supprime toutes les variantes de filtres pour ce préfixe.
 app.delete('/api/cache/:key', (req, res) => {
   const key = req.params.key;
-  lbcCache.delete(key);
-  bieniciCache.delete(key);
+  let removed = 0;
+  if (key.endsWith('|*')) {
+    const prefix = key.slice(0, -1); // "city_zip|"
+    for (const k of [...lbcCache.keys()]) {
+      if (k.startsWith(prefix)) { lbcCache.delete(k); removed++; }
+    }
+    for (const k of [...bieniciCache.keys()]) {
+      if (k.startsWith(prefix)) { bieniciCache.delete(k); removed++; }
+    }
+  } else {
+    if (lbcCache.delete(key)) removed++;
+    if (bieniciCache.delete(key)) removed++;
+  }
   saveCache(lbcCache);
   try { fs.writeFileSync(BIENICI_CACHE_FILE, JSON.stringify(Object.fromEntries(bieniciCache)), 'utf-8'); } catch (_) {}
-  console.log(`[Cache] Supprimé: ${key}`);
-  res.json({ ok: true });
+  console.log(`[Cache] Supprimé: ${key} (${removed} entrées)`);
+  res.json({ ok: true, removed });
 });
 
 // --- Favoris sur disque ---

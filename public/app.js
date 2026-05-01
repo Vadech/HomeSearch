@@ -153,6 +153,10 @@ function toggleFiltersPanel() {
 async function applyFilters() {
   const next = readFiltersFromUI();
   saveFilters(next);
+
+  // Rafraîchir le cache de toutes les communes avec les nouveaux critères
+  await refreshAllCachedCommunes();
+
   // Recharger la vue selon le contexte
   if (selectedCommune) {
     const [dvfData, lbcData, bieniciData] = await Promise.all([
@@ -164,6 +168,49 @@ async function applyFilters() {
     renderResults(selectedCommune, dvfData, lbcData, bieniciData);
   } else {
     showAllCached();
+  }
+}
+
+async function refreshAllCachedCommunes() {
+  const applyBtn = document.getElementById('filters-apply');
+  let cached = [];
+  try {
+    const res = await fetch('/api/cached-communes');
+    cached = await res.json();
+  } catch (_) { return; }
+  if (!cached.length) return;
+
+  const originalLabel = applyBtn?.textContent;
+  if (applyBtn) applyBtn.disabled = true;
+
+  for (let i = 0; i < cached.length; i++) {
+    const c = cached[i];
+    const label = c.city || c.zipcode;
+    if (applyBtn) applyBtn.textContent = `${label} (${i + 1}/${cached.length})...`;
+    try {
+      const geoRes = await fetch(`/api/communes?codePostal=${c.zipcode}&limit=1`);
+      const communes = await geoRes.json();
+      if (!communes.length) continue;
+      const commune = communes[0];
+      const coords = commune.centre?.coordinates;
+      const params = new URLSearchParams({
+        city: commune.nom,
+        zipcode: commune.codesPostaux?.[0] || '',
+        department_id: commune.codeDepartement,
+        refresh: '1',
+        ...(coords ? { lat: coords[1], lng: coords[0] } : {}),
+        ...filterQueryParams(),
+      });
+      await Promise.all([
+        fetch(`/api/leboncoin?${params}`),
+        fetch(`/api/bienici?${params}`),
+      ]);
+    } catch (_) {}
+  }
+
+  if (applyBtn) {
+    applyBtn.disabled = false;
+    applyBtn.textContent = originalLabel || 'Appliquer';
   }
 }
 
@@ -508,6 +555,11 @@ async function showAllCached() {
       const pubLabel = pubDate ? formatRelativeDate(pubDate) : '';
       const pubTitle = pubDate ? pubDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
 
+      const tags = analyzeListing(ad.body, ad.attributes, ad.subject);
+      const tagsHtml = tags.length > 0
+        ? `<div class="listing-tags">${tags.map(t => `<span class="tag" style="color:${t.color}">${t.icon} ${t.label}</span>`).join('')}</div>`
+        : '';
+
       return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
         ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
         <div class="listing-content">
@@ -527,6 +579,7 @@ async function showAllCached() {
             <span class="listing-price">${price?.toLocaleString('fr-FR')} €</span>
             ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
           </div>
+          ${tagsHtml}
           ${ad.url ? `<a href="${ad.url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
         </div>
       </div>`;
@@ -573,18 +626,68 @@ async function showAllCached() {
     container.innerHTML = html;
     updateCategoryCounts();
 
-    // Bouton supprimer une commune du cache
+    // Bouton supprimer une commune du cache (toutes variantes de filtres)
     container.querySelectorAll('.commune-tag-delete').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const key = btn.dataset.cacheKey;
-        await fetch(`/api/cache/${encodeURIComponent(key)}`, { method: 'DELETE' });
+        const baseKey = key.split('|')[0];
+        await fetch(`/api/cache/${encodeURIComponent(baseKey + '|*')}`, { method: 'DELETE' });
         btn.closest('.commune-tag')?.remove();
         // Recharger la vue
         showAllCached();
         loadCachedCommunes();
       });
     });
+
+    // Helper : recharge les annonces et met à jour uniquement les listes (sans rebuild du header)
+    async function reloadListingsContent() {
+      try {
+        const r = await fetch('/api/all-cached-ads');
+        const d = await r.json();
+        const seenU = new Set(), seenK = new Set();
+        const newAds = (d.ads || []).filter(ad => {
+          if (!matchesFilters(ad)) return false;
+          const p = ad.price?.[0];
+          const sq = Number(getAttr(ad, 'square'));
+          if (ad.url && seenU.has(ad.url)) return false;
+          const city = ad.location?.city || ad.location?.zipcode || '';
+          const dk = `${p}_${sq}_${city}`;
+          if (p && sq && seenK.has(dk)) return false;
+          if (ad.url) seenU.add(ad.url);
+          if (p && sq) seenK.add(dk);
+          return true;
+        });
+        newAds.sort((a, b) => {
+          const dA = adPublishedAt(a), dB = adPublishedAt(b);
+          if (dA && dB) return dB - dA;
+          if (dA) return -1;
+          if (dB) return 1;
+          const pA = a.price?.[0] / Number(getAttr(a, 'square')) || Infinity;
+          const pB = b.price?.[0] / Number(getAttr(b, 'square')) || Infinity;
+          return pA - pB;
+        });
+        newAds.forEach(ad => {
+          const ft = ((ad.subject || '') + ' ' + (ad.body || '')).toLowerCase();
+          ad._isRenov = renovRegex.test(ft) && !noRenovRegex.test(ft);
+        });
+        currentAllListings = newAds;
+        const newNormal = newAds.filter(a => !a._isRenov);
+        const newRenov = newAds.filter(a => a._isRenov);
+
+        const infoEl = document.getElementById('commune-info');
+        if (infoEl) infoEl.textContent = `${newAds.length} annonces en cache`;
+        const headerH3 = document.querySelector('#listings-header h3');
+        if (headerH3) headerH3.textContent = 'Toutes les annonces en cache (' + newAds.length + ')';
+
+        const normalEl = document.getElementById('normal-listings');
+        if (normalEl) normalEl.innerHTML = newNormal.map(ad => renderCachedCard(ad, newAds.indexOf(ad))).join('');
+        const renovEl = document.getElementById('renov-listings');
+        if (renovEl) renovEl.innerHTML = newRenov.map(ad => renderCachedCard(ad, newAds.indexOf(ad))).join('');
+
+        updateCategoryCounts();
+      } catch (_) {}
+    }
 
     // Bouton rafraîchir tout le cache
     document.getElementById('refresh-all-cache-btn')?.addEventListener('click', async () => {
@@ -616,13 +719,13 @@ async function showAllCached() {
             fetch(`/api/leboncoin?${params}`),
             fetch(`/api/bienici?${params}`),
           ]);
+          // Mettre à jour la liste après chaque commune (toutes communes confondues)
+          await reloadListingsContent();
         } catch (_) {}
       }
 
       btn.disabled = false;
       btn.textContent = 'Rafraîchir tout';
-      // Recharger la vue
-      showAllCached();
     });
   } catch (_) {
     document.getElementById('panel-loading')?.classList.add('hidden');
@@ -1124,6 +1227,7 @@ function renderResults(commune, dvf, lbc, bienici) {
   }
   headerHtml += '</div>';
   headerHtml += '<button id="refresh-all-btn">Rafraîchir tout</button>';
+  headerHtml += '<button id="delete-commune-cache-btn" title="Supprimer cette commune du cache">🗑️ Supprimer du cache</button>';
   headerHtml += '</div>';
 
   function renderAdCard(ad, i) {
@@ -1232,6 +1336,19 @@ function renderResults(commune, dvf, lbc, bienici) {
     ]);
     renderResults(selectedCommune, lastDvfData, freshLbc, freshBienici);
   });
+
+  // Bouton supprimer cette commune du cache
+  document.getElementById('delete-commune-cache-btn')?.addEventListener('click', async () => {
+    if (!selectedCommune) return;
+    const name = selectedCommune.nom || selectedCommune.codesPostaux?.[0] || 'cette commune';
+    if (!confirm(`Supprimer ${name} du cache ?`)) return;
+    const zipcode = selectedCommune.codesPostaux?.[0];
+    // "|*" supprime toutes les variantes de filtres pour cette commune
+    const cacheKey = `${selectedCommune.nom}_${zipcode}|*`;
+    await fetch(`/api/cache/${encodeURIComponent(cacheKey)}`, { method: 'DELETE' });
+    loadCachedCommunes();
+    showAllCached();
+  });
 }
 
 // --- Résumé des annonces ---
@@ -1247,16 +1364,19 @@ function analyzeListing(body, attributes, subject) {
   }
 
   // Logement secondaire / indépendant
-  const logementSecondaire = /logement ind[eé]pendant|studio ind[eé]pendant|t[12] ind[eé]pendant|appartement ind[eé]pendant|gîte|g[iî]te|chambre d'h[oô]te|annexe habitable|maison d'amis|d[eé]pendance am[eé]nag[eé]e|second logement|logement annexe|habitation s[eé]par[eé]e|partie ind[eé]pendante|possibilit[eé] de cr[eé]er|divisible|deux logements|2 logements|bi-famille|bifamili/i;
+  const logementSecondaire = /logement ind[eé]pendant|studio ind[eé]pendant|t[12] ind[eé]pendant|appartement ind[eé]pendant|studio attenant|appartement attenant|gîte|g[iî]te|chambre d'h[oô]te|annexe habitable|maison d'amis|d[eé]pendance am[eé]nag[eé]e|second logement|logement annexe|logement s[eé]par[eé]|habitation s[eé]par[eé]e|partie ind[eé]pendante|partie habitable|possibilit[eé] de cr[eé]er|possibilit[eé] de divis|divisible|deux logements|2 logements|bi-famille|bifamili|entr[eé]e ind[eé]pendante|2 entr[eé]es|deux entr[eé]es|double entr[eé]e|convertible en|am[eé]nageable en|potentiel locatif|rapport locatif|louer une partie|airbnb|location saisonni[eè]re/i;
   if (logementSecondaire.test(text)) {
     tags.push({ icon: '🏠', label: 'Logement secondaire possible', color: '#2e7d32' });
   }
 
   // Garage / atelier
-  const garageMatch = text.match(/garage|atelier|hangar|local technique|remise|d[eé]pendance/i);
+  const garageRegex = /\bgarages?\b|\batelier\b|\bhangar\b|\blocal technique\b|\bremise\b|\bd[eé]pendance/i;
+  const garageMatch = text.match(garageRegex);
   if (garageMatch) {
     const word = garageMatch[0].charAt(0).toUpperCase() + garageMatch[0].slice(1);
     tags.push({ icon: '🔧', label: word, color: '#1565c0' });
+  } else {
+    tags.push({ icon: '❌', label: 'Pas de garage', color: '#999' });
   }
 
   // Piscine
