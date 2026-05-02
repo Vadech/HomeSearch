@@ -523,7 +523,9 @@ app.get('/api/cached-communes', (req, res) => {
 // --- Supprimer une commune du cache ---
 // Si la clé se termine par "|*", supprime toutes les variantes de filtres pour ce préfixe,
 // y compris l'entrée nue (legacy, sans suffixe |...).
-app.delete('/api/cache/:key', (req, res) => {
+// Important : on flush la DB AVANT de répondre, sinon une suppression suivie d'un
+// redémarrage serveur recharge l'ancien état depuis Postgres.
+app.delete('/api/cache/:key', async (req, res) => {
   const key = req.params.key;
   let removed = 0;
   if (key.endsWith('|*')) {
@@ -542,7 +544,8 @@ app.delete('/api/cache/:key', (req, res) => {
   }
   saveCache();
   saveBieniciCache();
-  console.log(`[Cache] Supprimé: ${key} (${removed} entrées)`);
+  await dbSync.flush();
+  console.log(`[Cache] Supprimé: ${key} (${removed} entrées, flush DB OK)`);
   res.json({ ok: true, removed });
 });
 

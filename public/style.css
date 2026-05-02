@@ -820,6 +820,45 @@ body.resizing-panel {
   text-decoration: underline;
 }
 
+/* Top 5 favoris */
+.section-title--top {
+  color: #b8860b;
+  border-bottom-color: #f9a825;
+}
+
+.listing-item--top {
+  background: linear-gradient(180deg, #fffbe6 0%, white 100%);
+  border-left: 3px solid #f9a825;
+}
+
+.top-rank-badge {
+  background: #f9a825;
+  color: white;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.top-fav-btn {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px dashed #f9a825;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #b8860b;
+}
+
+.top-fav-btn:hover {
+  background: #fff8e1;
+}
+
+.listing-item--top .top-fav-btn {
+  background: #fff3e0;
+  border-style: solid;
+}
+
 /* Annotations utilisateur */
 .listing-annotation {
   display: flex;

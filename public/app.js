@@ -313,6 +313,38 @@ function toggleFavorite(adUrl, adData) {
   return !!favs[adUrl];
 }
 
+const TOP_LIMIT = 5;
+
+function getTopFavorites() {
+  const favs = getFavorites();
+  return Object.entries(favs)
+    .filter(([, v]) => v.topAt)
+    .sort((a, b) => a[1].topAt.localeCompare(b[1].topAt));
+}
+
+// Renvoie le rang (1..N) ou 0 si pas dans le top.
+function topRankOf(url) {
+  const i = getTopFavorites().findIndex(([u]) => u === url);
+  return i < 0 ? 0 : i + 1;
+}
+
+// Bascule un favori dans/hors du top. Renvoie {ok, reason} si refus.
+function toggleTopFavorite(url) {
+  const favs = getFavorites();
+  if (!favs[url]) return { ok: false, reason: 'not-fav' };
+  if (favs[url].topAt) {
+    delete favs[url].topAt;
+    saveFavorites(favs);
+    return { ok: true, isTop: false };
+  }
+  if (getTopFavorites().length >= TOP_LIMIT) {
+    return { ok: false, reason: 'limit' };
+  }
+  favs[url].topAt = new Date().toISOString();
+  saveFavorites(favs);
+  return { ok: true, isTop: true };
+}
+
 function isFavorite(adUrl) {
   return !!_favoritesCache[adUrl];
 }
@@ -484,47 +516,80 @@ function showFavorites() {
   const container = document.getElementById('all-listings');
   if (!container) return;
 
+  // Top en premier (ordre du topAt asc), puis le reste (ordre favoritedAt desc)
+  const topSet = new Set(getTopFavorites().map(([u]) => u));
+  const topEntries = getTopFavorites();
+  const others = entries
+    .filter(([u]) => !topSet.has(u))
+    .sort((a, b) => (b[1].favoritedAt || '').localeCompare(a[1].favoritedAt || ''));
+
   let html = '<div id="listings-header"><h3>★ Favoris (' + entries.length + ')</h3>';
   html += '<button id="back-to-results-btn" onclick="backToResults()">Retour aux annonces</button></div>';
 
   if (entries.length === 0) {
     html += '<p class="text-muted">Aucun favori pour le moment</p>';
   } else {
-    html += entries.map(([url, ad]) => {
-      const price = ad.price?.[0];
-      const surface = getAttr(ad, 'square');
-      const rooms = getAttr(ad, 'rooms');
-      const type = getAttr(ad, 'real_estate_type');
-      const typeLabel = { '1': 'Maison', '2': 'Appart.', '3': 'Terrain', '4': 'Parking', '5': 'Autre' }[type] || '';
-      const prixM2 = price && surface ? Math.round(price / Number(surface)) : null;
-      const thumb = ad.images?.small_url || ad.images?.thumb_url || '';
-      const locationLabel = ad.location?.city_label || [ad.location?.zipcode, ad.location?.city].filter(Boolean).join(' ') || '';
-      const sourceInfo = SOURCE_LABELS[ad._source] || { name: ad._source, color: '#999' };
-
-      return `<div class="listing-item listing-item--lbc listing-item--fav">
-        ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
-        <div class="listing-content">
-          <div class="listing-top-row">
-            <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
-            <button class="fav-btn fav-btn--active" onclick="removeFavAndRefresh(this, '${url.replace(/'/g, "\\'")}')" title="Retirer des favoris">★</button>
-          </div>
-          <div class="listing-title">${ad.subject || 'Annonce'}</div>
-          <div class="listing-location">${locationLabel}</div>
-          <div class="listing-details">
-            ${typeLabel} | ${surface || '?'} m² | ${rooms || '?'} pièces
-          </div>
-          <div class="listing-price-line">
-            <span class="listing-price">${price?.toLocaleString('fr-FR')} €</span>
-            ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
-          </div>
-          ${url ? renderAnnotationBlock(url) : ''}
-          ${url ? `<a href="${url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+    if (topEntries.length > 0) {
+      html += `<h3 class="section-title section-title--top">🏆 Top ${topEntries.length}/${TOP_LIMIT}</h3>`;
+      html += '<div class="favorites-top">' + topEntries.map(([url, ad], i) => renderFavCard(url, ad, i + 1)).join('') + '</div>';
+    }
+    if (others.length > 0) {
+      html += `<h3 class="section-title">Autres favoris (${others.length})</h3>`;
+      html += '<div class="favorites-others">' + others.map(([url, ad]) => renderFavCard(url, ad, 0)).join('') + '</div>';
+    }
   }
 
   container.innerHTML = html;
+}
+
+function renderFavCard(url, ad, topRank) {
+  const price = ad.price?.[0];
+  const surface = getAttr(ad, 'square');
+  const rooms = getAttr(ad, 'rooms');
+  const type = getAttr(ad, 'real_estate_type');
+  const typeLabel = { '1': 'Maison', '2': 'Appart.', '3': 'Terrain', '4': 'Parking', '5': 'Autre' }[type] || '';
+  const prixM2 = price && surface ? Math.round(price / Number(surface)) : null;
+  const thumb = ad.images?.small_url || ad.images?.thumb_url || '';
+  const locationLabel = ad.location?.city_label || [ad.location?.zipcode, ad.location?.city].filter(Boolean).join(' ') || '';
+  const sourceInfo = SOURCE_LABELS[ad._source] || { name: ad._source, color: '#999' };
+  const escapedUrl = url.replace(/'/g, "\\'");
+  const topClass = topRank > 0 ? 'listing-item--top' : '';
+  const topBadge = topRank > 0 ? `<span class="top-rank-badge">🏆 ${topRank}</span>` : '';
+  const topBtnLabel = topRank > 0 ? '🏆 Retirer du top' : '🏆 Ajouter au top';
+
+  return `<div class="listing-item listing-item--lbc listing-item--fav ${topClass}">
+    ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
+    <div class="listing-content">
+      <div class="listing-top-row">
+        ${topBadge}
+        <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
+        <button class="top-fav-btn" onclick="toggleTopFromBtn(this, '${escapedUrl}')" title="${topBtnLabel}">${topRank > 0 ? '🏆 ✕' : '🏆 +'}</button>
+        <button class="fav-btn fav-btn--active" onclick="removeFavAndRefresh(this, '${escapedUrl}')" title="Retirer des favoris">★</button>
+      </div>
+      <div class="listing-title">${ad.subject || 'Annonce'}</div>
+      <div class="listing-location">${locationLabel}</div>
+      <div class="listing-details">
+        ${typeLabel} | ${surface || '?'} m² | ${rooms || '?'} pièces
+      </div>
+      <div class="listing-price-line">
+        <span class="listing-price">${price?.toLocaleString('fr-FR')} €</span>
+        ${prixM2 ? `<span class="listing-price-m2">(${prixM2.toLocaleString('fr-FR')} €/m²)</span>` : ''}
+      </div>
+      ${url ? renderAnnotationBlock(url) : ''}
+      ${url ? `<a href="${url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
+    </div>
+  </div>`;
+}
+
+function toggleTopFromBtn(btn, url) {
+  const result = toggleTopFavorite(url);
+  if (!result.ok) {
+    if (result.reason === 'limit') {
+      alert(`Le top est limité à ${TOP_LIMIT} favoris. Retire d'abord un élément.`);
+    }
+    return;
+  }
+  showFavorites();
 }
 
 function removeFavAndRefresh(btn, url) {
@@ -892,11 +957,19 @@ async function loadCachedCommunes() {
 
     for (const entry of entries) {
       const zip = entry.zipcode || entry;
+      const cityName = entry.city || '';
       try {
-        const cRes = await fetch(`/api/communes?codePostal=${zip}&limit=1`);
+        // Plusieurs communes peuvent partager un même CP (ex: 34980 = Montferrier
+        // & Saint-Clément). On cherche par nom + CP, et on filtre par nom exact.
+        const params = cityName
+          ? `nom=${encodeURIComponent(cityName)}&codePostal=${zip}`
+          : `codePostal=${zip}&limit=1`;
+        const cRes = await fetch(`/api/communes?${params}`);
         const communes = await cRes.json();
-        if (!communes.length) continue;
-        const commune = communes[0];
+        const commune = cityName
+          ? communes.find(c => c.nom === cityName) || communes[0]
+          : communes[0];
+        if (!commune) continue;
 
         const contourRes = await fetch(`/api/communes/${commune.code}/contour`);
         const contourData = await contourRes.json();
