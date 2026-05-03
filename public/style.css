@@ -65,6 +65,8 @@ header h1 {
   position: relative;
   padding: 10px 20px;
   background: white;
+  color: #1a1a2e;
+  text-align: left;
   border-bottom: 1px solid #e8e8ed;
   box-shadow: 0 1px 3px rgba(20, 30, 60, 0.04);
 }
