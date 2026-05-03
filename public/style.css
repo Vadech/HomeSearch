@@ -976,6 +976,26 @@ a.listing-thumb:hover img {
   color: #b8860b;
 }
 
+.top-move-btn {
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  line-height: 1;
+  background: #fff8e1;
+  border: 1px solid #f9a825;
+  border-radius: 4px;
+  color: #b8860b;
+  cursor: pointer;
+}
+
+.top-move-btn:hover:not(:disabled) {
+  background: #ffe9a8;
+}
+
+.top-move-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .top-fav-btn:hover {
   background: #fff8e1;
 }

@@ -328,6 +328,24 @@ function topRankOf(url) {
   return i < 0 ? 0 : i + 1;
 }
 
+// Déplace un top d'un cran (dir = -1 monter, +1 descendre) en échangeant
+// le topAt avec celui du voisin. Pas d'effet si déjà aux extrémités.
+function moveTopFavorite(url, dir) {
+  const top = getTopFavorites();
+  const i = top.findIndex(([u]) => u === url);
+  if (i < 0) return false;
+  const j = i + dir;
+  if (j < 0 || j >= top.length) return false;
+  const favs = getFavorites();
+  const a = top[i][0];
+  const b = top[j][0];
+  const tmp = favs[a].topAt;
+  favs[a].topAt = favs[b].topAt;
+  favs[b].topAt = tmp;
+  saveFavorites(favs);
+  return true;
+}
+
 // Bascule un favori dans/hors du top. Renvoie {ok, reason} si refus.
 function toggleTopFavorite(url) {
   const favs = getFavorites();
@@ -543,7 +561,7 @@ function showFavorites() {
   } else {
     if (topEntries.length > 0) {
       html += `<h3 class="section-title section-title--top">🏆 Top ${topEntries.length}/${TOP_LIMIT}</h3>`;
-      html += '<div class="favorites-top">' + topEntries.map(([url, ad], i) => renderFavCard(url, ad, i + 1)).join('') + '</div>';
+      html += '<div class="favorites-top">' + topEntries.map(([url, ad], i) => renderFavCard(url, ad, i + 1, topEntries.length)).join('') + '</div>';
     }
     if (others.length > 0) {
       html += `<h3 class="section-title">Autres favoris (${others.length})</h3>`;
@@ -554,7 +572,7 @@ function showFavorites() {
   container.innerHTML = html;
 }
 
-function renderFavCard(url, ad, topRank) {
+function renderFavCard(url, ad, topRank, topTotal = 0) {
   const price = ad.price?.[0];
   const surface = getAttr(ad, 'square');
   const rooms = getAttr(ad, 'rooms');
@@ -568,12 +586,17 @@ function renderFavCard(url, ad, topRank) {
   const topClass = topRank > 0 ? 'listing-item--top' : '';
   const topBadge = topRank > 0 ? `<span class="top-rank-badge">🏆 ${topRank}</span>` : '';
   const topBtnLabel = topRank > 0 ? '🏆 Retirer du top' : '🏆 Ajouter au top';
+  const moveButtons = topRank > 0
+    ? `<button class="top-move-btn" onclick="moveTopFromBtn('${escapedUrl}', -1)" ${topRank === 1 ? 'disabled' : ''} title="Monter">▲</button>
+       <button class="top-move-btn" onclick="moveTopFromBtn('${escapedUrl}', 1)" ${topRank === topTotal ? 'disabled' : ''} title="Descendre">▼</button>`
+    : '';
 
   return `<div class="listing-item listing-item--lbc listing-item--fav ${topClass}">
     ${renderThumb(url, thumb, ad.subject)}
     <div class="listing-content">
       <div class="listing-top-row">
         ${topBadge}
+        ${moveButtons}
         <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
         <button class="top-fav-btn" onclick="toggleTopFromBtn(this, '${escapedUrl}')" title="${topBtnLabel}">${topRank > 0 ? '🏆 ✕' : '🏆 +'}</button>
         <button class="fav-btn fav-btn--active" onclick="removeFavAndRefresh(this, '${escapedUrl}')" title="Retirer des favoris">★</button>
@@ -591,6 +614,10 @@ function renderFavCard(url, ad, topRank) {
       ${url ? `<a href="${url}" target="_blank" rel="noopener">Voir l'annonce</a>` : ''}
     </div>
   </div>`;
+}
+
+function moveTopFromBtn(url, dir) {
+  if (moveTopFavorite(url, dir)) showFavorites();
 }
 
 function toggleTopFromBtn(btn, url) {
