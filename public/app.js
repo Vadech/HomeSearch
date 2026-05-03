@@ -10,11 +10,11 @@ let cachedCommunesLayer = null;
 
 // --- Filtres de recherche (paramétrables) ---
 const DEFAULT_FILTERS = {
-  minPrice: 500000,
-  maxPrice: 750000,
-  minSurface: 120,
+  minPrice: 200000,
+  maxPrice: 720000,
+  minSurface: 160,
   maxSurface: null,
-  propertyTypes: ['house', 'flat'],
+  propertyTypes: ['house'],
 };
 
 function getFilters() {
@@ -419,6 +419,18 @@ function saveAnnotation(adUrl, text) {
   }).catch(() => {});
 }
 
+// Rendu de la vignette d'une annonce. Si on a une URL, on enveloppe l'image
+// dans un <a> pour ouvrir l'annonce au clic ; sinon simple <div>.
+function renderThumb(url, thumb, subject) {
+  if (!thumb) return '';
+  const alt = subject || '';
+  const img = `<img src="${thumb}" alt="${alt}" loading="lazy" />`;
+  if (url) {
+    return `<a class="listing-thumb" href="${url}" target="_blank" rel="noopener" title="Ouvrir l'annonce">${img}</a>`;
+  }
+  return `<div class="listing-thumb">${img}</div>`;
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -558,7 +570,7 @@ function renderFavCard(url, ad, topRank) {
   const topBtnLabel = topRank > 0 ? '🏆 Retirer du top' : '🏆 Ajouter au top';
 
   return `<div class="listing-item listing-item--lbc listing-item--fav ${topClass}">
-    ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
+    ${renderThumb(url, thumb, ad.subject)}
     <div class="listing-content">
       <div class="listing-top-row">
         ${topBadge}
@@ -604,9 +616,25 @@ function removeFavAndRefresh(btn, url) {
 }
 
 function backToResults() {
+  // Depuis la vue Favoris : si une commune était sélectionnée, on y retourne ;
+  // sinon on retombe sur la vue "Toutes les communes en cache".
   if (selectedCommune && lastDvfData && lastSources.lbc) {
     renderResults(selectedCommune, lastDvfData, lastSources.lbc, lastSources.bienici);
+  } else {
+    showAllCached();
   }
+}
+
+// Désélectionne la commune courante : clear l'état + clear le contour carte + retour vue Tout
+function clearSelectedCommune() {
+  selectedCommune = null;
+  lastDvfData = null;
+  lastSources = {};
+  if (communeLayer && map) {
+    map.removeLayer(communeLayer);
+    communeLayer = null;
+  }
+  showAllCached();
 }
 
 async function showAllCached() {
@@ -695,7 +723,7 @@ async function showAllCached() {
         : '';
 
       return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
-        ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
+        ${renderThumb(ad.url, thumb, ad.subject)}
         <div class="listing-content">
           <div class="listing-top-row">
             <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>
@@ -766,9 +794,14 @@ async function showAllCached() {
       if (dvfCountEl) dvfCountEl.textContent = `${allVentes.length} ventes`;
     });
 
+    // "Retour" n'a de sens que si l'utilisateur arrive depuis une commune particulière
+    const canGoBack = !!(selectedCommune && lastDvfData && lastSources.lbc);
     let html = '<div id="listings-header"><h3>Toutes les annonces en cache (' + ads.length + ')</h3>';
     html += '<button id="refresh-all-cache-btn">Rafraîchir tout</button>';
-    html += '<button id="back-to-results-btn" onclick="backToResults()">Retour</button></div>';
+    if (canGoBack) {
+      html += `<button id="back-to-results-btn" onclick="backToResults()">← ${selectedCommune.nom}</button>`;
+    }
+    html += '</div>';
 
     // Liste des communes en cache
     if (cachedCommunes.length > 0) {
@@ -909,9 +942,9 @@ async function showAllCached() {
 
 // --- Init ---
 function toggleShowHidden() {
-  showHiddenAds = !showHiddenAds;
-  const btn = document.getElementById('hidden-btn-header');
-  if (btn) btn.style.background = showHiddenAds ? '#c62828' : '#757575';
+  // Source de vérité = la checkbox dans le panneau Critères
+  const cb = document.getElementById('filter-show-hidden');
+  showHiddenAds = !!cb?.checked;
 
   // Rafraîchir l'affichage des cartes masquées
   document.querySelectorAll('.listing-item--hidden').forEach(card => {
@@ -1280,7 +1313,8 @@ function renderResults(commune, dvf, lbc, bienici) {
   document.getElementById('panel-placeholder').classList.add('hidden');
   document.getElementById('panel-results').classList.remove('hidden');
 
-  document.getElementById('commune-name').textContent = commune.nom;
+  const nameEl = document.getElementById('commune-name');
+  nameEl.innerHTML = `${commune.nom}<button class="deselect-btn" onclick="clearSelectedCommune()" title="Désélectionner cette commune" aria-label="Désélectionner">×</button>`;
   document.getElementById('commune-info').textContent =
     `Code INSEE: ${commune.code} | CP: ${commune.codesPostaux?.[0] || 'N/A'} | Pop: ${commune.population?.toLocaleString('fr-FR') || 'N/A'}`;
 
@@ -1436,7 +1470,7 @@ function renderResults(commune, dvf, lbc, bienici) {
     const pubTitle = pubDate ? pubDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
 
     return `<div class="listing-item listing-item--lbc ${ad._isRenov ? 'listing-item--renov' : ''} ${fav ? 'listing-item--fav' : ''} ${hidden ? 'listing-item--hidden' : ''}" data-url="${ad.url || ''}"${hideStyle}>
-      ${thumb ? `<div class="listing-thumb"><img src="${thumb}" alt="${ad.subject || ''}" loading="lazy" /></div>` : ''}
+      ${renderThumb(ad.url, thumb, ad.subject)}
       <div class="listing-content">
         <div class="listing-top-row">
           <span class="source-badge source-badge--small" style="background:${sourceInfo.color}">${sourceInfo.name}</span>

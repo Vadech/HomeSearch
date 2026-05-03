@@ -9,18 +9,30 @@
 </head>
 <body>
   <div id="app">
-    <div id="search-bar">
+    <header id="search-bar">
       <div class="search-bar-row">
+        <div class="brand">
+          <span class="brand-logo">🏠</span>
+          <span class="brand-name">HomeSearch</span>
+        </div>
         <div class="search-input-wrap">
+          <span class="search-icon">🔎</span>
           <input type="text" id="search-input" placeholder="Rechercher une commune..." autocomplete="off" />
           <ul id="search-results"></ul>
         </div>
-        <button id="filters-btn" onclick="toggleFiltersPanel()">Critères ▾</button>
-        <button id="see-all-btn" onclick="showAllCached()">Voir tout</button>
-        <button id="fav-btn-header" onclick="showFavorites()">★ Favoris (<span id="fav-count">0</span>)</button>
-        <button id="hidden-btn-header" onclick="toggleShowHidden()">Masquées (<span id="hidden-count">0</span>)</button>
+        <nav class="header-actions">
+          <button id="filters-btn" class="hbtn" onclick="toggleFiltersPanel()" title="Critères de recherche">
+            <span class="hbtn-icon">⚙︎</span><span class="hbtn-label">Critères</span>
+          </button>
+          <button id="see-all-btn" class="hbtn" onclick="clearSelectedCommune()" title="Voir toutes les annonces en cache (désélectionne la commune)">
+            <span class="hbtn-icon">📋</span><span class="hbtn-label">Tout</span>
+          </button>
+          <button id="fav-btn-header" class="hbtn hbtn--fav" onclick="showFavorites()" title="Mes favoris">
+            <span class="hbtn-icon">★</span><span class="hbtn-label">Favoris</span><span class="hbtn-count" id="fav-count">0</span>
+          </button>
+        </nav>
       </div>
-    </div>
+    </header>
 
     <div id="filters-panel" class="hidden">
       <div class="filters-row">
@@ -45,6 +57,15 @@
           <div class="filter-types">
             <label><input type="checkbox" id="filter-type-house" value="house" /> Maison</label>
             <label><input type="checkbox" id="filter-type-flat" value="flat" /> Appartement</label>
+          </div>
+        </div>
+        <div class="filter-group filter-group--toggle">
+          <label>Affichage</label>
+          <div class="filter-types">
+            <label class="filter-toggle">
+              <input type="checkbox" id="filter-show-hidden" onchange="toggleShowHidden()" />
+              👁 Inclure les masquées (<span id="hidden-count">0</span>)
+            </label>
           </div>
         </div>
         <div class="filter-actions">

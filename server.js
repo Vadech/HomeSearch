@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -595,6 +596,27 @@ async function loadIntoMap(key, map) {
 }
 
 async function bootstrap() {
+  // Garde-fou : DATABASE_URL est obligatoire sauf si on force le mode local
+  // explicitement (utile en CI ou pour un test ponctuel).
+  if (!process.env.DATABASE_URL && !process.env.ALLOW_LOCAL_ONLY) {
+    const red = '\x1b[31m', bold = '\x1b[1m', reset = '\x1b[0m';
+    console.error(`
+${red}${bold}╔════════════════════════════════════════════════════════════════╗
+║  ⛔  DATABASE_URL n'est pas défini                              ║
+╠════════════════════════════════════════════════════════════════╣${reset}
+${red}║  Sans Postgres, tes favoris/masquées ne sont pas synchronisés  ║
+║  entre local et prod (chacun a son propre fichier).            ║
+║                                                                ║
+║  ➜  Lance avec :                                               ║
+║      ${bold}DATABASE_URL="postgres://..." npm run dev${reset}${red}                ║
+║                                                                ║
+║  ➜  Ou pour démarrer quand même en mode local (non recommandé) ║
+║      ${bold}ALLOW_LOCAL_ONLY=1 npm run dev${reset}${red}                           ║
+╚════════════════════════════════════════════════════════════════╝${reset}
+`);
+    process.exit(1);
+  }
+
   await Promise.all([
     loadIntoMap('.lbc-cache.json', lbcCache),
     loadIntoMap('.lbc-ad-cache.json', adCacheStore),
@@ -605,13 +627,16 @@ async function bootstrap() {
     dbSync.load('.annotations.json').then(v => { if (v) annotationsStore = v; }),
   ]);
   console.log(`[bootstrap] caches chargés — lbc:${lbcCache.size} bie:${bieniciCache.size} ad:${adCacheStore.size} tram:${tramCache.size}`);
+  console.log(`[bootstrap] favoris:${Object.keys(favoritesStore).length} masquées:${hiddenStore.length} annotations:${Object.keys(annotationsStore).length}`);
 
   app.listen(PORT, () => {
-    console.log(`Serveur démarré sur http://localhost:${PORT}`);
-    const mode = process.env.DATABASE_URL
-      ? '[db-sync] persistance Postgres active (backup local toutes les 5 min)'
-      : '[db-sync] DATABASE_URL non défini — fonctionnement en mémoire + backup fichier local';
-    console.log(mode);
+    console.log(`\n✅ Serveur démarré sur http://localhost:${PORT}`);
+    if (process.env.DATABASE_URL) {
+      console.log(`   Persistance : Postgres (Neon) — backup local toutes les 5 min`);
+    } else {
+      const yellow = '\x1b[33m', reset = '\x1b[0m';
+      console.log(`${yellow}   ⚠  Mode LOCAL ONLY — modifications non synchronisées avec la prod${reset}`);
+    }
   });
 
   for (const sig of ['SIGTERM', 'SIGINT']) {
